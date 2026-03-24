@@ -1,1 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="860" viewBox="0 0 700 860">
+  <rect width="100%" height="100%" fill="white"/>
+  <g stroke="#163A85" stroke-width="5" fill="none" stroke-linecap="round">
+    <line x1="350" y1="90" x2="120" y2="420"/>
+    <line x1="350" y1="90" x2="560" y2="420"/>
+    <line x1="120" y1="420" x2="560" y2="420"/>
+    <line x1="560" y1="420" x2="630" y2="760"/>
+    <line x1="300" y1="420" x2="630" y2="760"/>
 
+    <line x1="230" y1="275" x2="245" y2="265"/>
+    <line x1="455" y1="270" x2="470" y2="280"/>
+
+    <line x1="430" y1="412" x2="430" y2="432"/>
+    <line x1="445" y1="412" x2="445" y2="432"/>
+
+    <line x1="585" y1="575" x2="602" y2="583"/>
+    <line x1="579" y1="558" x2="596" y2="566"/>
+  </g>
+
+  <path d="M 320 140 A 40 30 0 0 0 380 140" stroke="black" stroke-width="4" fill="none"/>
+  <path d="M 275 422 A 50 36 0 0 0 338 452" stroke="black" stroke-width="4" fill="none"/>
+
+  <text x="337" y="230" font-size="48" font-weight="bold" font-family="Arial" fill="black">40°</text>
+  <text x="245" y="530" font-size="60" font-weight="bold" font-family="Arial" fill="black">x</text>
+  <text x="110" y="780" font-size="70" font-weight="bold" font-family="Arial" fill="black">x = ?</text>
+</svg>
