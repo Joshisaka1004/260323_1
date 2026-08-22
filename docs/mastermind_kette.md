@@ -30,7 +30,7 @@ python3 scripts/mastermind_kette.py --auto --sprache en --level evil --teile 2
 ```
 
 Die interaktive Abfrage fragt alles Wesentliche ab (Enter übernimmt den
-Vorschlag): Sprache der Blätter, Anzahl Teile (1–8), Zeichensatz (farbige
+Vorschlag): Sprache der Blätter, Anzahl Teile (1–24), Zeichensatz (farbige
 Kugeln, Ziffern, deutsche oder englische Wörter), Schwierigkeitsstufe,
 Codelänge bzw. Wortlänge, Symbolzahl, Wiederholung ja/nein, Zeilen pro Teil,
 Treffer-Obergrenzen, Wertungsmodus, Kettenrichtung, Gabel- und
@@ -52,6 +52,11 @@ Enumeration** aller möglichen Codes (bis 2 Mio. Codes, d. h. z. B. 8 Farben ×
 4. **Schwache Hinweise** — pro Zeile höchstens `--max-schwarz` schwarze Stifte
    (Standard 1) und `--max-treffer` Stifte gesamt (Standard 2). Es gibt also
    nie eine Zeile mit 3 oder 4 Schwarzen, die das Rätsel fast verraten würde.
+5. **Gepflegte Zeilen** — höchstens `--max-gleich` gleiche Symbole pro
+   Tipp-Zeile (Standard 2; Wörter ausgenommen, die sind wie sie sind), und
+   höchstens `--max-null` Zeilen mit null Treffern pro Teil (Standard 1,
+   0 = nie) — Null-Zeilen schließen zu viel auf einen Schlag aus. Beides
+   gilt auch für die Lügner-Anzeige und zählt Kettenzeilen mit.
 
 Reicht die gewünschte Zeilenzahl für Eindeutigkeit nicht aus (z. B. im
 Nur-Schwarz-Modus), erhöht der Generator sie selbstständig und meldet das.
@@ -177,8 +182,8 @@ angelegt; am Ende nennt das Skript den vollen Pfad.
 
 | Format | Inhalt |
 | --- | --- |
-| `pdf` | Druckfertiges A4-Vektor-PDF. Eigener PDF-Writer im Skript — **keine Zusatzbibliothek nötig**, funktioniert immer. Passt der Inhalt nicht auf die Seite, wird alles gleichmäßig verkleinert. |
-| `png` | Bilddatei in A4-Seitenverhältnis, Standard 150 dpi (1240 × 1754 px). Nutzt **Pillow** (`pip install pillow`); fehlt Pillow, wird ersatzweise ein vorhandener Chrome/Edge/Chromium im Hintergrund verwendet. Ist beides nicht da, meldet das Skript das und schreibt die übrigen Formate trotzdem. |
+| `pdf` | Druckfertiges A4-Vektor-PDF. Eigener PDF-Writer im Skript — **keine Zusatzbibliothek nötig**, funktioniert immer. Passen nicht alle Teile auf eine Seite (ab ca. 7 Teilen), entstehen **Folgeseiten in voller Größe** — nichts wird geschrumpft. |
+| `png` | Bilddatei in A4-Seitenverhältnis, Standard 150 dpi (1240 × 1754 px), bei mehreren Seiten `…_2.png`, `…_3.png` usw. Nutzt **Pillow** (`pip install pillow`); fehlt Pillow, wird ersatzweise ein vorhandener Chrome/Edge/Chromium im Hintergrund verwendet. Ist beides nicht da, meldet das Skript das und schreibt die übrigen Formate trotzdem. |
 | `html` | Seite für Bildschirm und Browser-Druck. |
 | `json` | Maschinenlesbare Rohdaten (eine Datei, Lösungen inbegriffen). |
 

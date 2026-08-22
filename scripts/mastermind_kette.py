@@ -350,6 +350,8 @@ class Konfig:
     zeilen: int = 5
     max_schwarz: int = 1
     max_treffer: int = 2
+    max_gleich: int = 2              # gleiche Symbole je Tipp-Zeile (Codes)
+    max_null: int = 1                # Null-Treffer-Zeilen je Teil
     wiederholung: bool = True
     modus: str = "standard"          # standard | schlampig | schwarz
     zeichen: str = "farben"          # farben | ziffern | wort-de | wort-en
@@ -500,11 +502,28 @@ def zeilen_arten(anzahl: int, cfg: Konfig, rng: random.Random):
 # Generierung eines Teils
 # ---------------------------------------------------------------------------
 
-def baue_zeilen(code, basis, pool, arten, cfg, rng):
+def wiederholung_ok(g, cfg) -> bool:
+    """Tipp-Zeilen mit vielen gleichen Symbolen (z. B. dreimal dieselbe
+    Ziffer) wirken unattraktiv — höchstens `max_gleich` gleiche Symbole.
+    Wörter sind ausgenommen: Sie sind, wie sie sind."""
+    if cfg._woerter is not None:
+        return True
+    grenze = max(cfg.max_gleich, -(-cfg.laenge // cfg.farben))
+    zaehl = {}
+    for x in g:
+        zaehl[x] = zaehl.get(x, 0) + 1
+        if zaehl[x] > grenze:
+            return False
+    return True
+
+
+def baue_zeilen(code, basis, pool, arten, cfg, rng, nullen=0):
     """Wählt schwache Hinweiszeilen (eine je Eintrag in `arten`), die die
     Kandidatenmenge `basis` schrittweise auf genau {code} reduzieren. Die
     Zielgröße pro Schritt wird so gesteuert, dass die Menge erst mit der
-    letzten Zeile kollabiert."""
+    letzten Zeile kollabiert. `nullen` zählt bereits verbrauchte
+    Null-Treffer-Zeilen: Mehr als `cfg.max_null` pro Teil gibt es nicht —
+    solche Zeilen schließen zu viel auf einen Schlag aus."""
     f = cfg.farben
     anzahl = len(arten)
     kandidaten = basis
@@ -519,6 +538,8 @@ def baue_zeilen(code, basis, pool, arten, cfg, rng):
                 if g in benutzt:
                     continue
                 s, w = bewertung(g, code, f)
+                if s + w == 0 and nullen >= cfg.max_null:
+                    continue
                 key = projektion(art, s, w)
                 neu = filtere(kandidaten, g, art, key, f)
                 if len(neu) == 1:
@@ -533,6 +554,8 @@ def baue_zeilen(code, basis, pool, arten, cfg, rng):
             if g in benutzt:
                 continue
             s, w = bewertung(g, code, f)
+            if s + w == 0 and nullen >= cfg.max_null:
+                continue
             key = projektion(art, s, w)
             neu = filtere(kandidaten, g, art, key, f)
             n = len(neu)
@@ -544,6 +567,8 @@ def baue_zeilen(code, basis, pool, arten, cfg, rng):
         if beste is None:
             return None
         _, g, s, w, key, neu = beste
+        if s + w == 0:
+            nullen += 1
         zeilen.append(Zeile(g, s, w, arten[t], key))
         benutzt.add(g)
         kandidaten = neu
@@ -610,9 +635,13 @@ def finde_luege(code, zeilen, basis, cfg, rng):
     Zeile lügt' weiterhin nur `code` als Lösung bleibt."""
     idxs = list(range(len(zeilen)))
     rng.shuffle(idxs)
+    null_keys = {("sw", (0, 0)), ("summe", 0), ("schwarz", 0)}
+    anzeige_nullen = sum(1 for z in zeilen if (z.art, z.key) in null_keys)
     for idx in idxs[:3]:
         z = zeilen[idx]
-        fakes = [k for k in moegliche_keys(z.art, cfg) if k != z.key]
+        fakes = [k for k in moegliche_keys(z.art, cfg) if k != z.key
+                 and not ((z.art, k) in null_keys
+                          and anzeige_nullen >= cfg.max_null)]
         rng.shuffle(fakes)
         for fake in fakes[:6]:
             probe = list(zeilen)
@@ -668,11 +697,17 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
         if ketten is None or len(basis) < 12 * zeilen_n:
             continue
 
+        # Kettenzeilen mit Nullwertung zählen mit ins Null-Budget.
+        ketten_nullen = sum(1 for k in ketten if k.schwarz + k.weiss == 0)
+        if ketten_nullen > cfg.max_null:
+            continue
+
         # Pool aller "schwachen" Tipps relativ zum Geheimcode.
         ketten_tipps = {k.tipp for k in ketten}
         pool = [g for g in alle
                 if g != code
                 and g not in ketten_tipps
+                and wiederholung_ok(g, cfg)
                 and schwach(*bewertung(g, code, f), cfg)]
         if len(pool) < zeilen_n * 3:
             continue
@@ -682,7 +717,8 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
             # kommt dazu, damit jede (R-1)-Teilmenge eindeutig bleibt —
             # nötig, damit eine lügende Zeile verkraftbar ist.
             arten = zeilen_arten(zeilen_n - 1, cfg, rng)
-            kern = baue_zeilen(code, basis, pool, arten, cfg, rng)
+            kern = baue_zeilen(code, basis, pool, arten, cfg, rng,
+                               nullen=ketten_nullen)
             if kern is None:
                 continue
             # Lösungsmengen der (R-2)-Teilmengen einmal vorberechnen: die
@@ -692,10 +728,14 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
                           for i in range(len(kern))]
             benutzt = {z.tipp for z in kern}
             zeilen = None
+            kern_nullen = ketten_nullen + sum(
+                1 for z in kern if z.wahr_schwarz + z.wahr_weiss == 0)
             for g in rng.sample(pool, min(len(pool), 250)):
                 if g in benutzt:
                     continue
                 s, w = bewertung(g, code, f)
+                if s + w == 0 and kern_nullen >= cfg.max_null:
+                    continue
                 if all(filtere(m, g, "sw", (s, w), f) == [code]
                        for m in teilmengen):
                     zeilen = kern + [Zeile(g, s, w, "sw", (s, w))]
@@ -707,7 +747,8 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
                 continue
         else:
             arten = zeilen_arten(zeilen_n, cfg, rng)
-            zeilen = baue_zeilen(code, basis, pool, arten, cfg, rng)
+            zeilen = baue_zeilen(code, basis, pool, arten, cfg, rng,
+                                 nullen=ketten_nullen)
             if zeilen is None:
                 continue
             if not jede_zeile_noetig(zeilen, basis, f):
@@ -735,7 +776,9 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
         abstand = max(unten - teil.punkte, teil.punkte - oben)
         if bester is None or abstand < bester[0]:
             bester = (abstand, teil)
-        if fertige >= cfg.band_versuche:
+        # Lügner-Punkte sind praktisch deterministisch — weitere teure
+        # Versuche würden die Stufe nicht mehr ändern.
+        if fertige >= (1 if cfg.luegner else cfg.band_versuche):
             break
     return bester[1] if bester else None
 
@@ -1468,21 +1511,83 @@ def _peg_masse(cfg: Konfig, karten_b: float):
     return max(12.0, peg_d)
 
 
-def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
-    """Baut die Aufgaben- oder die Lösungsseite als Zeichnung auf."""
+def _karten_daten(teil, cfg, art, wert_kopf):
+    """Zeileninhalt, Kopfzeile, Hinweise und Zusatztexte einer Karte."""
+    mehrere = len(teil.ketten) > 1
+    if art == "aufgabe":
+        zeilen = []
+        for ki, k in enumerate(teil.ketten, 1):
+            label = f"K{ki}" if mehrere else "K"
+            zeilen.append((label, None, "sw", (k.schwarz, k.weiss), "kette"))
+        for i, z in enumerate(teil.zeilen, 1):
+            zeilen.append((str(i), z.tipp, z.art, z.key, "normal"))
+        kopf = wert_kopf
+    else:
+        zeilen = [("L", teil.code, None, None, "loesung")]
+        kopf = T(cfg, "kopf_level", lvl=teil.schwierigkeit)
+
+    hinweise = []
+    if art == "aufgabe":
+        richtung = (T(cfg, "rueckwaerts_kurz")
+                    if cfg.kette == "rueckwaerts" else "")
+        for ki, k in enumerate(teil.ketten, 1):
+            label = f"K{ki}" if mehrere else "K"
+            hinweise.append(T(cfg, "kette_hinweis", label=label,
+                              n=k.quelle, r=richtung))
+
+    zusatz = []
+    if art == "loesung":
+        zusatz.append(T(cfg, "sol_code", c=code_text(teil.code, cfg)))
+        if cfg.luegner:
+            li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
+            lz = next(z for z in teil.zeilen if z.luege)
+            wahr = wertung_text(lz.art, projektion(lz.art, lz.wahr_schwarz,
+                                lz.wahr_weiss), cfg)
+            zusatz.append(T(cfg, "sol_luege", i=li, w=wahr))
+        for ki, k in enumerate(teil.ketten, 1):
+            label = f"K{ki}" if mehrere else "K"
+            zusatz.append(T(cfg, "sol_kette", label=label, n=k.quelle,
+                            c=code_text(k.tipp, cfg)))
+    return zeilen, kopf, hinweise, zusatz
+
+
+def _karten_hoehe(zeilen, hinweise, zusatz, zeilen_h):
+    h = 9.0 + 15.0 + 10.0 * len(hinweise) + len(zeilen) * zeilen_h + 9.0
+    if zusatz:
+        h += 3 + 9.5 * len(zusatz)
+    return h
+
+
+def baue_seiten(teile, cfg: Konfig, seed: int, art: str):
+    """Baut die Aufgaben- bzw. Lösungsblätter auf. Passen nicht alle Teile
+    auf eine A4-Seite, entstehen Folgeseiten — nichts wird geschrumpft."""
     rand = 34.0
     breite, hoehe = A4
     inhalt_b = breite - 2 * rand
+    limit = hoehe - rand - 14        # Unterkante für Inhalt
+    titel = T(cfg, "titel" if art == "aufgabe" else "titel_loesung")
+
+    seiten = []
     el = []
     y = rand
 
-    titel = T(cfg, "titel" if art == "aufgabe" else "titel_loesung")
+    # Kopf der ersten Seite
     el.append(el_text(breite / 2, y + 16, titel, 19, C_INK, "middle", True))
     y += 24
     for zeile in umbruch(_untertitel(cfg, teile, seed), inhalt_b, 8.2):
         el.append(el_text(breite / 2, y + 8, zeile, 8.2, C_GRAU, "middle"))
         y += 11
     y += 10
+
+    def naechste_seite():
+        nonlocal el, y
+        seiten.append(Seite(breite, hoehe, el))
+        el = []
+        y = rand
+        el.append(el_text(rand, y + 10, titel, 11, C_INK, "start", True))
+        el.append(el_text(breite - rand, y + 10, f"· {len(seiten) + 1} ·",
+                          9, C_MUTED, "end"))
+        y += 24
 
     spalten = 2 if len(teile) > 1 else 1
     luecke = 16.0
@@ -1492,91 +1597,58 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
     wert_kopf = T(cfg, {"standard": "kopf_sw", "schlampig": "kopf_wertung",
                         "schwarz": "kopf_schwarz"}[cfg.modus])
 
-    zeilen_y = y
-    max_h = 0.0
-    for n, teil in enumerate(teile):
-        spalte = n % spalten
-        if spalte == 0 and n > 0:
-            zeilen_y += max_h + luecke
-            max_h = 0.0
-        x = rand + spalte * (karten_b + luecke)
+    daten = [_karten_daten(teil, cfg, art, wert_kopf) for teil in teile]
 
-        mehrere = len(teil.ketten) > 1
-        if art == "aufgabe":
-            zeilen = []
-            for ki, k in enumerate(teil.ketten, 1):
-                label = f"K{ki}" if mehrere else "K"
-                zeilen.append((label, None, "sw", (k.schwarz, k.weiss),
-                               "kette"))
-            for i, z in enumerate(teil.zeilen, 1):
-                zeilen.append((str(i), z.tipp, z.art, z.key, "normal"))
-            kopf = wert_kopf
-        else:
-            zeilen = [("L", teil.code, None, None, "loesung")]
-            kopf = T(cfg, "kopf_level", lvl=teil.schwierigkeit)
-
-        hinweise = []
-        if art == "aufgabe":
-            richtung = (T(cfg, "rueckwaerts_kurz")
-                        if cfg.kette == "rueckwaerts" else "")
-            for ki, k in enumerate(teil.ketten, 1):
-                label = f"K{ki}" if mehrere else "K"
-                hinweise.append(T(cfg, "kette_hinweis", label=label,
-                                  n=k.quelle, r=richtung))
-        h = _karte(el, x, zeilen_y, karten_b,
-                   T(cfg, "teil", n=teil.nummer), kopf,
-                   zeilen, cfg, peg_d, zeilen_h, hinweise)
-
-        if art == "loesung":
-            # Klartext und ggf. Lügenzeile unter die Lösung schreiben.
-            zusatz = [T(cfg, "sol_code", c=code_text(teil.code, cfg))]
-            if cfg.luegner:
-                li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
-                lz = next(z for z in teil.zeilen if z.luege)
-                wahr = wertung_text(lz.art, projektion(lz.art,
-                                    lz.wahr_schwarz, lz.wahr_weiss), cfg)
-                zusatz.append(T(cfg, "sol_luege", i=li, w=wahr))
-            for ki, k in enumerate(teil.ketten, 1):
-                label = f"K{ki}" if mehrere else "K"
-                zusatz.append(T(cfg, "sol_kette", label=label,
-                                n=k.quelle, c=code_text(k.tipp, cfg)))
-            ty = zeilen_y + h + 3
+    # Karten reihenweise setzen; passt eine Reihe nicht mehr, neue Seite.
+    for anfang in range(0, len(teile), spalten):
+        reihe = list(range(anfang, min(anfang + spalten, len(teile))))
+        reihen_h = max(_karten_hoehe(daten[i][0], daten[i][2], daten[i][3],
+                                     zeilen_h) for i in reihe)
+        if y + reihen_h > limit and y > rand + 30:
+            naechste_seite()
+        for platz, i in enumerate(reihe):
+            zeilen, kopf, hinweise, zusatz = daten[i]
+            x = rand + platz * (karten_b + luecke)
+            h = _karte(el, x, y, karten_b,
+                       T(cfg, "teil", n=teile[i].nummer), kopf,
+                       zeilen, cfg, peg_d, zeilen_h, hinweise)
+            ty = y + h + 3
             for txt in zusatz:
                 el_text_stifte(el, x + 9, ty + 7, txt, 7.6, C_GRAU)
                 ty += 9.5
-            h = ty - zeilen_y
-        max_h = max(max_h, h)
-    y = zeilen_y + max_h + 16
+        y += reihen_h + luecke
 
+    # Fußtexte (Regeln bzw. Lösungsvermerk) — notfalls auf eigener Seite.
     if art == "aufgabe":
+        fuss = []
         for regel in regel_zeilen(cfg):
             for i, zeile in enumerate(umbruch(regel, inhalt_b - 10, 8.0)):
-                if i == 0:
-                    el.append(el_text(rand, y + 7, "•", 8.0, C_GRAU))
-                el_text_stifte(el, rand + 10, y + 7, zeile, 8.0, C_GRAU)
-                y += 10
-        y += 4
+                fuss.append(("•" if i == 0 else "", zeile, C_GRAU))
         legende = (legende_text(cfg) if cfg.zeichen != "farben"
                    else T(cfg, "legende_farben") + " · ".join(
                        f"{s} = {farbname(s, cfg)}"
                        for s in SYMBOLE[:cfg.farben]))
+        fuss.append(("", "", C_MUTED))
         for zeile in umbruch(legende, inhalt_b, 8.0):
-            el.append(el_text(rand, y + 7, zeile, 8.0, C_MUTED))
-            y += 10
+            fuss.append(("", zeile, C_MUTED))
     else:
-        el.append(el_text(rand, y + 7, T(cfg, "sol_fuss"), 8.0, C_MUTED))
+        fuss = [("", T(cfg, "sol_fuss"), C_MUTED)]
+    if y + len(fuss) * 10 + 6 > limit:
+        naechste_seite()
+    y += 6
+    for punkt, zeile, farbe in fuss:
+        if punkt:
+            el.append(el_text(rand, y + 7, punkt, 8.0, farbe))
+        if zeile:
+            el_text_stifte(el, rand + (10 if art == "aufgabe" else 0),
+                           y + 7, zeile, 8.0, farbe)
         y += 10
 
     if cfg.signatur:
         el.append(el_text(breite - rand, hoehe - rand + 6, cfg.signatur, 8.0,
                           C_MUTED, "end"))
-
-    # Passt der Inhalt nicht auf die Seite, alles gleichmäßig verkleinern.
-    verbraucht = y + rand
-    if verbraucht > hoehe:
-        f = (hoehe - 2 * rand) / (verbraucht - 2 * rand)
-        el = [_skaliere(e, f, rand) for e in el]
-    return Seite(breite, hoehe, el)
+    seiten.append(Seite(breite, hoehe, el))
+    return seiten
 
 
 def _skaliere(e, f, rand):
@@ -1658,7 +1730,7 @@ def _mal_befehl(fuell, rand) -> str:
     return "f\n" if fuell is not None else "S\n"
 
 
-def seite_als_pdf(seite: Seite) -> bytes:
+def _seiten_strom(seite: Seite) -> bytes:
     H = seite.hoehe
     c = [f"1 J 1 j\n"]
     for e in seite.elemente:
@@ -1694,22 +1766,41 @@ def seite_als_pdf(seite: Seite) -> bytes:
             c.append(b"(".decode() + _pdf_str(txt).decode("latin-1")
                      + ") Tj ET\n")
     strom = "".join(c).encode("latin-1")
-    komprimiert = zlib.compress(strom)
+    return zlib.compress(strom)
+
+
+def pdf_dokument(seiten) -> bytes:
+    """Setzt ein PDF aus einer oder mehreren Seiten zusammen."""
+    n = len(seiten)
+    # Objektnummern: 1 Catalog, 2 Pages, 3..2+n Seiten, danach Inhalte,
+    # zuletzt die beiden Schriften.
+    obj_seite = lambda i: 3 + i
+    obj_inhalt = lambda i: 3 + n + i
+    obj_f1 = 3 + 2 * n
+    obj_f2 = obj_f1 + 1
 
     objekte = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        (f"<< /Type /Pages /Kids [3 0 R] /Count 1 >>").encode(),
-        (f"<< /Type /Page /Parent 2 0 R /MediaBox "
-         f"[0 0 {seite.breite:.2f} {seite.hoehe:.2f}] /Resources "
-         f"<< /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>").encode(),
-        (b"<< /Length " + str(len(komprimiert)).encode()
-         + b" /Filter /FlateDecode >>\nstream\n" + komprimiert
-         + b"\nendstream"),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
-        b"/Encoding /WinAnsiEncoding >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold "
-        b"/Encoding /WinAnsiEncoding >>",
+        ("<< /Type /Pages /Kids ["
+         + " ".join(f"{obj_seite(i)} 0 R" for i in range(n))
+         + f"] /Count {n} >>").encode(),
     ]
+    for i, s in enumerate(seiten):
+        objekte.append(
+            (f"<< /Type /Page /Parent 2 0 R /MediaBox "
+             f"[0 0 {s.breite:.2f} {s.hoehe:.2f}] /Resources "
+             f"<< /Font << /F1 {obj_f1} 0 R /F2 {obj_f2} 0 R >> >> "
+             f"/Contents {obj_inhalt(i)} 0 R >>").encode())
+    for s in seiten:
+        strom = _seiten_strom(s)
+        objekte.append(b"<< /Length " + str(len(strom)).encode()
+                       + b" /Filter /FlateDecode >>\nstream\n" + strom
+                       + b"\nendstream")
+    objekte.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+                   b"/Encoding /WinAnsiEncoding >>")
+    objekte.append(b"<< /Type /Font /Subtype /Type1 /BaseFont "
+                   b"/Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+
     aus = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     pos = []
     for i, obj in enumerate(objekte, 1):
@@ -1718,16 +1809,18 @@ def seite_als_pdf(seite: Seite) -> bytes:
     xref = len(aus)
     aus += f"xref\n0 {len(objekte) + 1}\n".encode()
     aus += b"0000000000 65535 f \n"
-    for p in pos:
-        aus += f"{p:010d} 00000 n \n".encode()
+    for q in pos:
+        aus += f"{q:010d} 00000 n \n".encode()
     aus += (f"trailer\n<< /Size {len(objekte) + 1} /Root 1 0 R >>\n"
             f"startxref\n{xref}\n%%EOF\n").encode()
     return bytes(aus)
 
 
-def schreibe_pdf(teile, cfg: Konfig, seed: int, pfad: str, art: str):
+def schreibe_pdf(teile, cfg: Konfig, seed: int, pfad: str, art: str) -> int:
+    seiten = baue_seiten(teile, cfg, seed, art)
     with open(pfad, "wb") as fh:
-        fh.write(seite_als_pdf(baue_seite(teile, cfg, seed, art)))
+        fh.write(pdf_dokument(seiten))
+    return len(seiten)
 
 
 # ---------------------------------------------------------------------------
@@ -1870,12 +1963,18 @@ def _png_mit_browser(teile, cfg, seed, pfad, art, breite_px) -> bool:
 
 def schreibe_png(teile, cfg: Konfig, seed: int, pfad: str, art: str,
                  dpi: int = 150) -> str:
-    """Schreibt eine PNG-Datei. Rückgabe: der benutzte Weg."""
-    seite = baue_seite(teile, cfg, seed, art)
-    if _png_mit_pillow(seite, pfad, dpi / 72.0):
-        return "Pillow"
+    """Schreibt PNG-Dateien (bei mehreren Seiten: _2, _3 ... im Namen).
+    Rückgabe: der benutzte Weg."""
+    seiten = baue_seiten(teile, cfg, seed, art)
+    stamm, endung = os.path.splitext(pfad)
+    pfade = [pfad] + [f"{stamm}_{i + 2}{endung}"
+                      for i in range(len(seiten) - 1)]
+    if all(_png_mit_pillow(s, q, dpi / 72.0)
+           for s, q in zip(seiten, pfade)):
+        return ("Pillow" if len(seiten) == 1
+                else f"Pillow, {len(seiten)} Seiten")
     if _png_mit_browser(teile, cfg, seed, pfad, art,
-                        round(seite.breite * dpi / 72.0)):
+                        round(seiten[0].breite * dpi / 72.0)):
         return "Browser"
     raise RuntimeError(
         "PNG-Ausgabe nicht möglich: weder Pillow noch ein Chrome/Edge-Browser "
@@ -1958,7 +2057,8 @@ def interaktiv(cfg: Konfig) -> Konfig:
     cfg.sprache = "de" if swahl == 1 else "en"
 
     cfg.teile = frage("Wie viele verkettete Teile?", cfg.teile, int,
-                      lambda v: 1 <= v <= 8, "1 bis 8 Teile.")
+                      lambda v: 1 <= v <= 24,
+                      "1 bis 24 Teile (mehrseitige Ausgabe ab ca. 7).")
 
     print("\nZeichensatz:  1 = farbige Kugeln")
     print("              2 = Ziffern (0-9)")
@@ -2022,6 +2122,9 @@ def interaktiv(cfg: Konfig) -> Konfig:
                             cfg.max_treffer, int,
                             lambda v: cfg.max_schwarz <= v <= cfg.laenge,
                             "Mindestens so groß wie max. Schwarz.")
+    cfg.max_null = frage("Max. Zeilen mit NULL Treffern pro Teil (0 = nie)",
+                         cfg.max_null, int, lambda v: 0 <= v <= 20,
+                         "0 bis 20.")
     print("\nWertungsmodus:  1 = klassisch schwarz/weiß")
     print("                2 = schlampig: einige Zeilen zeigen nur die "
           "Treffersumme (schwerer)")
@@ -2077,6 +2180,12 @@ def parse_args(argv):
     p.add_argument("--zeilen", type=int, default=5)
     p.add_argument("--max-schwarz", type=int, default=None)
     p.add_argument("--max-treffer", type=int, default=None)
+    p.add_argument("--max-gleich", type=int, default=2,
+                   help="höchstens so viele gleiche Symbole je Tipp-Zeile "
+                        "(Wörter ausgenommen)")
+    p.add_argument("--max-null", type=int, default=1,
+                   help="höchstens so viele Null-Treffer-Zeilen je Teil "
+                        "(0 = nie)")
     p.add_argument("--ohne-wiederholung", action="store_true")
     p.add_argument("--modus", choices=("standard", "schlampig", "schwarz"),
                    default=None)
@@ -2210,6 +2319,7 @@ def main(argv=None):
     cfg = Konfig(teile=args.teile, zeichen=args.zeichen, level=args.level,
                  sprache=args.sprache,
                  zeilen=args.zeilen,
+                 max_gleich=args.max_gleich, max_null=args.max_null,
                  wiederholung=not args.ohne_wiederholung,
                  kette=args.kette, gabel=args.gabel,
                  seed=args.seed, signatur=args.signatur)
@@ -2233,6 +2343,8 @@ def main(argv=None):
             and not cfg.wiederholung and cfg.farben < cfg.laenge):
         sys.exit("Ohne Wiederholung braucht es mindestens so viele Symbole "
                  "wie Stellen.")
+    if not 1 <= cfg.teile <= 24:
+        sys.exit("Bitte 1 bis 24 Teile wählen.")
     if cfg.gabel and cfg.teile < 3:
         sys.exit("Die Gabel-Kette braucht mindestens 3 Teile "
                  "(zwei Stränge plus Gabelpunkt).")
