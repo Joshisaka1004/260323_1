@@ -14,6 +14,9 @@ Skript: [`scripts/mastermind_kette.py`](../scripts/mastermind_kette.py)
 python3 scripts/mastermind_kette.py            # interaktive Abfrage
 python3 scripts/mastermind_kette.py --auto     # Standardwerte ohne Rückfragen
 python3 scripts/mastermind_kette.py --auto --teile 2 --luegner --seed 42
+
+# 4 Teile als PDF und PNG, Aufgabe und Lösung jeweils getrennt
+python3 scripts/mastermind_kette.py --auto --formate pdf,png --basis buch_seite_12
 ```
 
 Die interaktive Abfrage fragt alles Wesentliche ab (Enter übernimmt den
@@ -56,14 +59,31 @@ Deshalb mischt der schlampig-Modus Summen-Zeilen mit normalen Zeilen.
 
 ## Ausgaben
 
-* **Konsole** — Rätsel, Regeln und (mit Abstand) die Lösungen.
-* **HTML** (`--html datei.html`, Standard `mastermind_kette.html`) —
-  druckfertige Seite in der Buch-Optik (farbige Kreise, Schwarz/Weiß-Punkte,
-  gestrichelte Kettenzeile); Lösungen eingeklappt und vom Druck ausgenommen.
-* **JSON** (`--json datei.json`) — maschinenlesbar für Weiterverarbeitung.
+Aufgabe und Lösung werden **immer als getrennte Dateien** geschrieben — die
+Aufgabenseiten kommen ins Buch, die Lösungsseiten in den Anhang. Gesteuert
+wird das über zwei Schalter:
 
+```bash
+--formate html,pdf,png,json     # oder 'alle'
+--basis mein_raetsel            # Basisname der Dateien
+--dpi 150                       # Auflösung der PNG-Ausgabe
+```
+
+Daraus entstehen z. B. `mein_raetsel_aufgabe.pdf` und
+`mein_raetsel_loesung.pdf`. Im interaktiven Modus fragt das Skript die
+Formate am Ende ab.
+
+| Format | Inhalt |
+| --- | --- |
+| `pdf` | Druckfertiges A4-Vektor-PDF. Eigener PDF-Writer im Skript — **keine Zusatzbibliothek nötig**, funktioniert immer. Passt der Inhalt nicht auf die Seite, wird alles gleichmäßig verkleinert. |
+| `png` | Bilddatei in A4-Seitenverhältnis, Standard 150 dpi (1240 × 1754 px). Nutzt **Pillow** (`pip install pillow`); fehlt Pillow, wird ersatzweise ein vorhandener Chrome/Edge/Chromium im Hintergrund verwendet. Ist beides nicht da, meldet das Skript das und schreibt die übrigen Formate trotzdem. |
+| `html` | Seite für Bildschirm und Browser-Druck. |
+| `json` | Maschinenlesbare Rohdaten (eine Datei, Lösungen inbegriffen). |
+
+Die Konsolenausgabe zeigt das Rätsel immer an, mit den Lösungen am Ende.
 Mit `--seed` ist jedes Rätsel exakt reproduzierbar; der verwendete Seed steht
-in jeder Ausgabe.
+in jeder Ausgabe — auch in der Kopfzeile von PDF und PNG, sodass sich
+Aufgaben- und Lösungsblatt später eindeutig zuordnen lassen.
 
 ## Ideen für weitere Varianten
 

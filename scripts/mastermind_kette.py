@@ -50,8 +50,10 @@ import html as html_mod
 import itertools
 import json
 import math
+import os
 import random
 import sys
+import zlib
 from dataclasses import dataclass
 from typing import Optional
 
@@ -619,61 +621,68 @@ def html_kreis(sym_index: int) -> str:
     return f'<span class="peg" style="background:{bg};color:{fg}">{s}</span>'
 
 
-def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str):
-    modus_txt = {"standard": "Schwarz/Weiß-Wertung",
-                 "schlampig": "teils nur Treffersumme",
-                 "schwarz": "nur schwarze Stifte"}[cfg.modus]
-    unter = (f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
-             f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}"
-             f" · max. {cfg.max_schwarz} schwarz / {cfg.max_treffer} Treffer je Zeile"
-             f" · {modus_txt}")
-    if cfg.luegner:
-        unter += " · Lügner-Variante"
-    if cfg.kette == "rueckwaerts" and cfg.teile > 1:
-        unter += " · Rückwärts-Kette"
-    schwierig = max((t.schwierigkeit for t in teile),
-                    key=lambda s: ["leicht", "mittel", "schwer"].index(s))
+def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
+                  art: str = "aufgabe"):
+    unter = _untertitel(cfg, teile, seed)
     wert_kopf = {"standard": "schwarz / weiß", "schlampig": "Wertung",
                  "schwarz": "schwarz"}[cfg.modus]
+    titel = ("MASTERMIND-KETTE" if art == "aufgabe"
+             else "MASTERMIND-KETTE — LÖSUNGEN")
 
     karten = []
     for teil in teile:
         zeilen_html = []
-        if teil.kette is not None:
-            frage = "".join('<span class="peg ghost">?</span>'
-                            for _ in range(cfg.laenge))
-            richtung = " (rückwärts!)" if cfg.kette == "rueckwaerts" else ""
-            fb = html_wertung("sw", (teil.kette.schwarz, teil.kette.weiss))
+        if art == "loesung":
+            pegs = "".join(html_kreis(x) for x in teil.code)
             zeilen_html.append(
-                f'<div class="row chain"><span class="idx">K</span>'
-                f'<span class="chainlabel">Code aus Teil {teil.nummer - 1}'
-                f'{richtung}</span>{frage}<span class="fb">{fb}</span></div>')
-        for i, z in enumerate(teil.zeilen, 1):
-            pegs = "".join(html_kreis(x) for x in z.tipp)
-            zeilen_html.append(
-                f'<div class="row"><span class="idx">{i}</span>{pegs}'
-                f'<span class="fb">{html_wertung(z.art, z.key)}</span></div>')
+                f'<div class="row"><span class="idx">L</span>{pegs}</div>')
+            zusatz = [f"Code: {code_text(teil.code)}"]
+            if cfg.luegner:
+                li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
+                lz = next(z for z in teil.zeilen if z.luege)
+                wahr = wertung_text(lz.art, projektion(
+                    lz.art, lz.wahr_schwarz, lz.wahr_weiss))
+                zusatz.append(f"Lügenzeile: {li} (wahre Wertung: {wahr})")
+            if teil.kette is not None:
+                zusatz.append(f"Kettenzeile aus Teil {teil.nummer - 1}: "
+                              f"{code_text(teil.kette.tipp)}")
+            for txt in zusatz:
+                zeilen_html.append(
+                    f'<div class="note">{html_mod.escape(txt)}</div>')
+            kopf = f"Level: {teil.schwierigkeit}"
+        else:
+            if teil.kette is not None:
+                frage = "".join('<span class="peg ghost">?</span>'
+                                for _ in range(cfg.laenge))
+                richtung = " (rückwärts!)" if cfg.kette == "rueckwaerts" else ""
+                fb = html_wertung("sw", (teil.kette.schwarz, teil.kette.weiss))
+                zeilen_html.append(
+                    f'<div class="row chain"><span class="idx">K</span>'
+                    f'<span class="chainlabel">Code aus Teil '
+                    f'{teil.nummer - 1}{richtung}</span>{frage}'
+                    f'<span class="fb">{fb}</span></div>')
+            for i, z in enumerate(teil.zeilen, 1):
+                pegs = "".join(html_kreis(x) for x in z.tipp)
+                zeilen_html.append(
+                    f'<div class="row"><span class="idx">{i}</span>{pegs}'
+                    f'<span class="fb">{html_wertung(z.art, z.key)}</span>'
+                    f'</div>')
+            kopf = wert_kopf
         karten.append(
             f'<section class="card"><header><h2>TEIL {teil.nummer}</h2>'
-            f'<span class="fbhead">{wert_kopf}</span></header>'
+            f'<span class="fbhead">{kopf}</span></header>'
             + "".join(zeilen_html) + "</section>")
 
-    regeln = "".join(f"<li>{html_mod.escape(r)}</li>" for r in regel_zeilen(cfg))
-    legende = " · ".join(f"<b>{s}</b>&nbsp;=&nbsp;{FARBEN[s][0]}"
-                         for s in SYMBOLE[:cfg.farben])
-    loesungen = []
-    for teil in teile:
-        extra = ""
-        if cfg.luegner:
-            li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
-            lz = next(z for z in teil.zeilen if z.luege)
-            wahr = wertung_text(lz.art, projektion(lz.art, lz.wahr_schwarz,
-                                                   lz.wahr_weiss))
-            extra = (f'Lügenzeile: {li} &nbsp;·&nbsp; wahre Wertung: '
-                     f'{html_mod.escape(wahr)}')
-        pegs = "".join(html_kreis(x) for x in teil.code)
-        loesungen.append(f'<div class="row"><span class="idx">T{teil.nummer}'
-                         f'</span>{pegs}<span class="fb">{extra}</span></div>')
+    if art == "aufgabe":
+        regeln = "".join(f"<li>{html_mod.escape(r)}</li>"
+                         for r in regel_zeilen(cfg))
+        legende = ('<div class="legende">Farben: ' + " · ".join(
+            f"<b>{s}</b>&nbsp;=&nbsp;{FARBEN[s][0]}"
+            for s in SYMBOLE[:cfg.farben]) + "</div>")
+        fuss = f'<div class="rules"><ul>{regeln}</ul></div>{legende}'
+    else:
+        fuss = ('<div class="rules">Zu jeder Aufgabe gibt es genau eine '
+                'Lösung — per vollständiger Enumeration geprüft.</div>')
 
     signatur = (f'<div class="sig">{html_mod.escape(cfg.signatur)}</div>'
                 if cfg.signatur else "")
@@ -681,7 +690,7 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str):
     doc = f"""<!DOCTYPE html>
 <html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mastermind-Kette</title>
+<title>{titel}</title>
 <style>
   :root {{
     --bg:#eef1f5; --card:#ffffff; --ink:#1b3a55; --muted:#8a97a5;
@@ -732,8 +741,7 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str):
   .rules li {{ margin:.25em 0; }}
   .legende {{ max-width:1200px; margin:14px auto 0; color:#5b6b7a;
               font-size:.9rem; }}
-  details {{ max-width:1200px; margin:22px auto 0; }}
-  summary {{ cursor:pointer; font-weight:700; color:var(--chainline); }}
+  .note {{ color:#5b6b7a; font-size:.85rem; padding:2px 6px; }}
   .sig {{ text-align:right; max-width:1200px; margin:18px auto 0;
           color:var(--muted); }}
   @media print {{
@@ -741,13 +749,10 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str):
     details {{ display:none; }}
   }}
 </style></head><body>
-<h1>MASTERMIND-KETTE</h1>
-<div class="sub">{unter} · Level (heuristisch): {schwierig} · Seed {seed}</div>
+<h1>{titel}</h1>
+<div class="sub">{unter}</div>
 <div class="grid">{''.join(karten)}</div>
-<div class="rules"><ul>{regeln}</ul></div>
-<div class="legende">Farben: {legende}</div>
-<details><summary>Lösungen anzeigen</summary>
-<div class="card" style="margin-top:10px">{''.join(loesungen)}</div></details>
+{fuss}
 {signatur}
 </body></html>"""
     with open(pfad, "w", encoding="utf-8") as fh:
@@ -781,6 +786,671 @@ def schreibe_json(teile, cfg: Konfig, seed: int, pfad: str):
     }
     with open(pfad, "w", encoding="utf-8") as fh:
         json.dump(daten, fh, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Zeichenmodell (gemeinsame Grundlage für PDF- und PNG-Ausgabe)
+# ---------------------------------------------------------------------------
+#
+# Eine Seite ist eine Liste einfacher Grundelemente in einem Koordinatensystem
+# mit Ursprung oben links (y wächst nach unten, Einheit = Punkt wie im PDF).
+# Beide Ausgabewege rendern daraus dasselbe Bild.
+
+A4 = (595.28, 841.89)
+
+
+@dataclass
+class Seite:
+    breite: float
+    hoehe: float
+    elemente: list
+
+
+def el_rect(x, y, w, h, radius=0, fuell=None, rand=None, breite=1,
+            gestrichelt=False):
+    return ("rect", x, y, w, h, radius, fuell, rand, breite, gestrichelt)
+
+
+def el_kreis(cx, cy, r, fuell=None, rand=None, breite=1, gestrichelt=False):
+    return ("kreis", cx, cy, r, fuell, rand, breite, gestrichelt)
+
+
+def el_text(x, basislinie, s, groesse, farbe=(0, 0, 0), anker="start",
+            fett=False):
+    return ("text", x, basislinie, s, groesse, farbe, anker, fett)
+
+
+def rgb(hexfarbe: str):
+    h = hexfarbe.lstrip("#")
+    return (int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255)
+
+
+# Zeichenbreiten der PDF-Standardschrift Helvetica (Einheiten pro 1000).
+# Damit werden Textbreiten für Zentrierung und Zeilenumbruch berechnet.
+_W_NORMAL = {
+    " ": 278, "!": 278, '"': 355, "#": 556, "$": 556, "%": 889, "&": 667,
+    "'": 191, "(": 333, ")": 333, "*": 389, "+": 584, ",": 278, "-": 333,
+    ".": 278, "/": 278, ":": 278, ";": 278, "<": 584, "=": 584, ">": 584,
+    "?": 556, "@": 1015, "[": 278, "\\": 278, "]": 278, "^": 469, "_": 556,
+    "`": 333, "{": 334, "|": 260, "}": 334, "~": 584,
+    "A": 667, "B": 667, "C": 722, "D": 722, "E": 667, "F": 611, "G": 778,
+    "H": 722, "I": 278, "J": 500, "K": 667, "L": 556, "M": 833, "N": 722,
+    "O": 778, "P": 667, "Q": 778, "R": 722, "S": 667, "T": 611, "U": 722,
+    "V": 667, "W": 944, "X": 667, "Y": 667, "Z": 611,
+    "a": 556, "b": 556, "c": 500, "d": 556, "e": 556, "f": 278, "g": 556,
+    "h": 556, "i": 222, "j": 222, "k": 500, "l": 222, "m": 833, "n": 556,
+    "o": 556, "p": 556, "q": 556, "r": 333, "s": 500, "t": 278, "u": 556,
+    "v": 500, "w": 722, "x": 500, "y": 500, "z": 500,
+}
+_W_FETT = dict(_W_NORMAL, **{
+    "A": 722, "B": 722, "J": 556, "K": 722, "L": 611, "?": 611,
+    "a": 556, "b": 611, "c": 556, "d": 611, "e": 556, "f": 333, "g": 611,
+    "h": 611, "i": 278, "j": 278, "k": 556, "l": 278, "m": 889, "n": 611,
+    "o": 611, "p": 611, "q": 611, "r": 389, "s": 556, "t": 333, "u": 611,
+    "v": 556, "w": 778, "x": 556, "y": 556, "z": 500,
+    ":": 333, ";": 333, "!": 333, "-": 333,
+})
+# Umlaute und Sonderzeichen auf die Breite ihres Grundzeichens abbilden.
+for _tab in (_W_NORMAL, _W_FETT):
+    for _z, _basis in (("ä", "a"), ("ö", "o"), ("ü", "u"),
+                       ("Ä", "A"), ("Ö", "O"), ("Ü", "U"), ("é", "e")):
+        _tab[_z] = _tab[_basis]
+    _tab["ß"] = 556
+    _tab["·"] = 278
+    _tab["•"] = 350
+    _tab["●"] = 640
+    _tab["○"] = 640
+    _tab["–"] = 556
+    _tab["—"] = 1000
+    _tab["„"] = 333
+    _tab["“"] = 333
+    _tab["€"] = 556
+
+
+def text_breite(s: str, groesse: float, fett=False) -> float:
+    tab = _W_FETT if fett else _W_NORMAL
+    ziffer = 556
+    return sum(tab.get(z, ziffer if z.isdigit() else 556)
+               for z in s) * groesse / 1000.0
+
+
+def umbruch(s: str, breite: float, groesse: float, fett=False):
+    """Bricht einen Text auf die gegebene Breite um."""
+    zeilen, akt = [], ""
+    for wort in s.split(" "):
+        probe = f"{akt} {wort}".strip()
+        if akt and text_breite(probe, groesse, fett) > breite:
+            zeilen.append(akt)
+            akt = wort
+        else:
+            akt = probe
+    if akt:
+        zeilen.append(akt)
+    return zeilen
+
+
+def el_text_stifte(el, x, basislinie, s, groesse, farbe=(0, 0, 0),
+                  fett=False):
+    """Wie el_text, zeichnet aber ● und ○ als echte Kreise. Die
+    PDF-Standardkodierung kennt diese Zeichen nicht, und so sehen sie
+    ohnehin genauso aus wie die Stifte in den Hinweiszeilen."""
+    if "●" not in s and "○" not in s:
+        el.append(el_text(x, basislinie, s, groesse, farbe))
+        return
+    r = groesse * 0.25
+    puffer = ""
+    for zeichen in s:
+        if zeichen in "●○":
+            if puffer:
+                el.append(el_text(x, basislinie, puffer, groesse, farbe,
+                                  "start", fett))
+                x += text_breite(puffer, groesse, fett)
+                puffer = ""
+            el.append(el_kreis(x + groesse * 0.275, basislinie - r, r,
+                               fuell=C_DUNKEL if zeichen == "●" else C_WEISS,
+                               rand=C_DUNKEL, breite=groesse * 0.09))
+            x += text_breite(zeichen, groesse, fett)
+        else:
+            puffer += zeichen
+    if puffer:
+        el.append(el_text(x, basislinie, puffer, groesse, farbe, "start", fett))
+
+
+# ---------------------------------------------------------------------------
+# Seitenaufbau (Aufgabe und Lösung)
+# ---------------------------------------------------------------------------
+
+C_INK = rgb("#1b3a55")
+C_GRAU = rgb("#5b6b7a")
+C_MUTED = rgb("#8a97a5")
+C_LINIE = rgb("#e3e8ee")
+C_ZEILE = rgb("#f7f9fb")
+C_KETTE = rgb("#e8f4fa")
+C_KETTELINIE = rgb("#2f7f9e")
+C_DUNKEL = rgb("#24303c")
+C_WEISS = (1, 1, 1)
+
+
+def _untertitel(cfg: Konfig, teile, seed: int) -> str:
+    modus_txt = {"standard": "Schwarz/Weiß-Wertung",
+                 "schlampig": "teils nur Treffersumme",
+                 "schwarz": "nur schwarze Stifte"}[cfg.modus]
+    unter = (f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
+             f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}"
+             f" · max. {cfg.max_schwarz} schwarz / {cfg.max_treffer} Treffer "
+             f"je Zeile · {modus_txt}")
+    if cfg.luegner:
+        unter += " · Lügner-Variante"
+    if cfg.kette == "rueckwaerts" and cfg.teile > 1:
+        unter += " · Rückwärts-Kette"
+    schwierig = max((t.schwierigkeit for t in teile),
+                    key=lambda s: ["leicht", "mittel", "schwer"].index(s))
+    return f"{unter} · Level: {schwierig} · Seed {seed}"
+
+
+def _wertung_elemente(el, x_rechts, mitte, art, key, punkt_r=3.4):
+    """Zeichnet die Schwarz/Weiß-Stifte rechtsbündig; gibt die Breite zurück."""
+    if art == "summe":
+        txt = f"{key} Treffer"
+        w = text_breite(txt, 7.5, True) + 12
+        el.append(el_rect(x_rechts - w, mitte - 6, w, 12, 6, fuell=C_DUNKEL))
+        el.append(el_text(x_rechts - w / 2, mitte + 2.7, txt, 7.5,
+                          C_WEISS, "middle", True))
+        return w
+    if art == "sw":
+        s, weiss = key
+    else:
+        s, weiss = key, 0
+    n = s + weiss
+    if n == 0:
+        el.append(el_text(x_rechts, mitte + 3, "–", 9, C_MUTED, "end"))
+        return text_breite("–", 9)
+    schritt = 2 * punkt_r + 2.6
+    x = x_rechts - n * schritt + punkt_r
+    for i in range(n):
+        el.append(el_kreis(x + i * schritt, mitte, punkt_r,
+                           fuell=C_DUNKEL if i < s else C_WEISS,
+                           rand=C_DUNKEL, breite=1.1))
+    return n * schritt
+
+
+def _karte(el, x, y, breite, titel, kopf_rechts, zeilen, cfg, peg_d, zeilen_h,
+           hinweis=None):
+    """Zeichnet eine Teil-Karte; `zeilen` sind Tupel
+    (label, pegs|None, art, key, stil) mit stil in {'normal','kette','loesung'}.
+    Gibt die Höhe der Karte zurück."""
+    pad = 9.0
+    kopf_h = 15.0
+    hinweis_h = 10.0 if hinweis else 0.0
+    hoehe = pad + kopf_h + hinweis_h + len(zeilen) * zeilen_h + pad
+    el.append(el_rect(x, y, breite, hoehe, 8, fuell=C_WEISS,
+                      rand=C_LINIE, breite=1))
+    el.append(el_text(x + pad, y + pad + 10, titel, 11.5, C_INK, "start", True))
+    if kopf_rechts:
+        el.append(el_text(x + breite - pad, y + pad + 9, kopf_rechts, 7.5,
+                          C_MUTED, "end"))
+
+    idx_b = 11.0
+    fb_b = max(34.0, cfg.laenge * (2 * 3.4 + 2.6) + 4)
+    peg_x0 = x + pad + idx_b + 4
+    peg_gap = 3.6
+    if hinweis:
+        el.append(el_text(x + pad, y + pad + kopf_h + 7, hinweis, 7.2,
+                          C_KETTELINIE, "start", True))
+    yy = y + pad + kopf_h + hinweis_h
+    for i, (label, pegs, art, key, stil) in enumerate(zeilen):
+        mitte = yy + zeilen_h / 2
+        if stil == "kette":
+            el.append(el_rect(x + pad - 3, yy + 1.5, breite - 2 * pad + 6,
+                              zeilen_h - 3, 6, fuell=C_KETTE,
+                              rand=C_KETTELINIE, breite=1.2,
+                              gestrichelt=True))
+        elif i % 2 == 1:
+            el.append(el_rect(x + pad - 3, yy + 1.5, breite - 2 * pad + 6,
+                              zeilen_h - 3, 6, fuell=C_ZEILE))
+        el.append(el_text(x + pad + idx_b, mitte + 3, label, 8.5,
+                          C_GRAU, "end", True))
+        if pegs is None:  # verdeckte Kettenzeile: Fragezeichen
+            for j in range(cfg.laenge):
+                cx = peg_x0 + j * (peg_d + peg_gap) + peg_d / 2
+                el.append(el_kreis(cx, mitte, peg_d / 2, fuell=rgb("#f4fafd"),
+                                   rand=C_KETTELINIE, breite=1.6,
+                                   gestrichelt=True))
+                el.append(el_text(cx, mitte + peg_d * 0.17, "?", peg_d * 0.5,
+                                  C_KETTELINIE, "middle", True))
+        else:
+            for j, sym in enumerate(pegs):
+                cx = peg_x0 + j * (peg_d + peg_gap) + peg_d / 2
+                buchstabe = SYMBOLE[sym]
+                _, bg, fg = FARBEN[buchstabe]
+                el.append(el_kreis(cx, mitte, peg_d / 2, fuell=rgb(bg),
+                                   rand=C_DUNKEL, breite=1.6))
+                el.append(el_text(cx, mitte + peg_d * 0.17, buchstabe,
+                                  peg_d * 0.46, rgb(fg), "middle", True))
+        if art is not None:
+            _wertung_elemente(el, x + breite - pad - 2, mitte, art, key)
+        yy += zeilen_h
+    return hoehe
+
+
+def _peg_masse(cfg: Konfig, karten_b: float):
+    """Passende Kreisgröße für die Kartenbreite."""
+    pad, idx_b = 9.0, 11.0
+    fb_b = max(34.0, cfg.laenge * (2 * 3.4 + 2.6) + 4)
+    frei = karten_b - 2 * pad - idx_b - 4 - fb_b - 6
+    peg_d = min(30.0, (frei - (cfg.laenge - 1) * 3.6) / cfg.laenge)
+    return max(12.0, peg_d)
+
+
+def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
+    """Baut die Aufgaben- oder die Lösungsseite als Zeichnung auf."""
+    rand = 34.0
+    breite, hoehe = A4
+    inhalt_b = breite - 2 * rand
+    el = []
+    y = rand
+
+    titel = ("MASTERMIND-KETTE" if art == "aufgabe"
+             else "MASTERMIND-KETTE — LÖSUNGEN")
+    el.append(el_text(breite / 2, y + 16, titel, 19, C_INK, "middle", True))
+    y += 24
+    for zeile in umbruch(_untertitel(cfg, teile, seed), inhalt_b, 8.2):
+        el.append(el_text(breite / 2, y + 8, zeile, 8.2, C_GRAU, "middle"))
+        y += 11
+    y += 10
+
+    spalten = 2 if len(teile) > 1 else 1
+    luecke = 16.0
+    karten_b = (inhalt_b - luecke * (spalten - 1)) / spalten
+    peg_d = _peg_masse(cfg, karten_b)
+    zeilen_h = peg_d + 6
+    wert_kopf = {"standard": "schwarz / weiß", "schlampig": "Wertung",
+                 "schwarz": "schwarz"}[cfg.modus]
+
+    zeilen_y = y
+    max_h = 0.0
+    for n, teil in enumerate(teile):
+        spalte = n % spalten
+        if spalte == 0 and n > 0:
+            zeilen_y += max_h + luecke
+            max_h = 0.0
+        x = rand + spalte * (karten_b + luecke)
+
+        if art == "aufgabe":
+            zeilen = []
+            if teil.kette is not None:
+                zeilen.append(("K", None, "sw",
+                               (teil.kette.schwarz, teil.kette.weiss),
+                               "kette"))
+            for i, z in enumerate(teil.zeilen, 1):
+                zeilen.append((str(i), z.tipp, z.art, z.key, "normal"))
+            kopf = wert_kopf
+        else:
+            zeilen = [("L", teil.code, None, None, "loesung")]
+            kopf = f"Level: {teil.schwierigkeit}"
+
+        hinweis = None
+        if art == "aufgabe" and teil.kette is not None:
+            richtung = (" rückwärts" if cfg.kette == "rueckwaerts" else "")
+            hinweis = (f"Zeile K: Lösungscode aus Teil {teil.nummer - 1}"
+                       f"{richtung} eintragen")
+        h = _karte(el, x, zeilen_y, karten_b, f"TEIL {teil.nummer}", kopf,
+                   zeilen, cfg, peg_d, zeilen_h, hinweis)
+
+        if art == "loesung":
+            # Klartext und ggf. Lügenzeile unter die Lösung schreiben.
+            zusatz = [f"Code: {code_text(teil.code)}"]
+            if cfg.luegner:
+                li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
+                lz = next(z for z in teil.zeilen if z.luege)
+                wahr = wertung_text(lz.art, projektion(lz.art, lz.wahr_schwarz,
+                                                       lz.wahr_weiss))
+                zusatz.append(f"Lügenzeile: {li} (wahr: {wahr})")
+            if teil.kette is not None:
+                zusatz.append(f"Kettenzeile aus Teil {teil.nummer - 1}: "
+                              f"{code_text(teil.kette.tipp)}")
+            ty = zeilen_y + h + 3
+            for txt in zusatz:
+                el_text_stifte(el, x + 9, ty + 7, txt, 7.6, C_GRAU)
+                ty += 9.5
+            h = ty - zeilen_y
+        max_h = max(max_h, h)
+    y = zeilen_y + max_h + 16
+
+    if art == "aufgabe":
+        for regel in regel_zeilen(cfg):
+            for i, zeile in enumerate(umbruch(regel, inhalt_b - 10, 8.0)):
+                if i == 0:
+                    el.append(el_text(rand, y + 7, "•", 8.0, C_GRAU))
+                el_text_stifte(el, rand + 10, y + 7, zeile, 8.0, C_GRAU)
+                y += 10
+        y += 4
+        legende = "Farben: " + " · ".join(
+            f"{s} = {FARBEN[s][0]}" for s in SYMBOLE[:cfg.farben])
+        for zeile in umbruch(legende, inhalt_b, 8.0):
+            el.append(el_text(rand, y + 7, zeile, 8.0, C_MUTED))
+            y += 10
+    else:
+        el.append(el_text(rand, y + 7,
+                          "Zu jeder Aufgabe gibt es genau eine Lösung — "
+                          "per vollständiger Enumeration geprüft.",
+                          8.0, C_MUTED))
+        y += 10
+
+    if cfg.signatur:
+        el.append(el_text(breite - rand, hoehe - rand + 6, cfg.signatur, 8.0,
+                          C_MUTED, "end"))
+
+    # Passt der Inhalt nicht auf die Seite, alles gleichmäßig verkleinern.
+    verbraucht = y + rand
+    if verbraucht > hoehe:
+        f = (hoehe - 2 * rand) / (verbraucht - 2 * rand)
+        el = [_skaliere(e, f, rand) for e in el]
+    return Seite(breite, hoehe, el)
+
+
+def _skaliere(e, f, rand):
+    def s(v):
+        return rand + (v - rand) * f
+    if e[0] == "rect":
+        _, x, y, w, h, r, fu, ra, b, g = e
+        return ("rect", s(x), s(y), w * f, h * f, r * f, fu, ra, b * f, g)
+    if e[0] == "kreis":
+        _, cx, cy, r, fu, ra, b, g = e
+        return ("kreis", s(cx), s(cy), r * f, fu, ra, b * f, g)
+    _, x, y, txt, gr, farbe, anker, fett = e
+    return ("text", s(x), s(y), txt, gr * f, farbe, anker, fett)
+
+
+# ---------------------------------------------------------------------------
+# Ausgabe: PDF (eigener Vektor-Writer, ohne Fremdbibliotheken)
+# ---------------------------------------------------------------------------
+
+_K = 0.5523  # Bézier-Faktor für Kreise
+
+
+_ERSATZ = {"★": "*", "→": "->", "←": "<-", "✓": "v", "✗": "x", "≤": "<=",
+           "≥": ">=", "≠": "!=", "…": "...", "●": "*", "○": "o"}
+
+
+def _pdf_str(s: str) -> bytes:
+    """Text nach WinAnsi (cp1252) kodieren und PDF-gerecht maskieren.
+    Zeichen außerhalb von WinAnsi (etwa in einer eigenen Signatur) werden
+    durch lesbare Entsprechungen ersetzt statt durch Fragezeichen."""
+    for _alt, _neu in _ERSATZ.items():
+        s = s.replace(_alt, _neu)
+    roh = s.encode("cp1252", "replace")
+    out = bytearray()
+    for b in roh:
+        if b in (0x28, 0x29, 0x5C):
+            out += b"\\" + bytes([b])
+        elif b < 32 or b > 126:
+            out += ("\\%03o" % b).encode("ascii")
+        else:
+            out.append(b)
+    return bytes(out)
+
+
+def _pdf_kreis(cx, cy, r):
+    k = _K * r
+    return (f"{cx + r:.2f} {cy:.2f} m "
+            f"{cx + r:.2f} {cy + k:.2f} {cx + k:.2f} {cy + r:.2f} "
+            f"{cx:.2f} {cy + r:.2f} c "
+            f"{cx - k:.2f} {cy + r:.2f} {cx - r:.2f} {cy + k:.2f} "
+            f"{cx - r:.2f} {cy:.2f} c "
+            f"{cx - r:.2f} {cy - k:.2f} {cx - k:.2f} {cy - r:.2f} "
+            f"{cx:.2f} {cy - r:.2f} c "
+            f"{cx + k:.2f} {cy - r:.2f} {cx + r:.2f} {cy - k:.2f} "
+            f"{cx + r:.2f} {cy:.2f} c h ")
+
+
+def _pdf_rundrect(x, y, w, h, r):
+    r = min(r, w / 2, h / 2)
+    k = _K * r
+    x2, y2 = x + w, y + h
+    return (f"{x + r:.2f} {y:.2f} m {x2 - r:.2f} {y:.2f} l "
+            f"{x2 - r + k:.2f} {y:.2f} {x2:.2f} {y + r - k:.2f} "
+            f"{x2:.2f} {y + r:.2f} c "
+            f"{x2:.2f} {y2 - r:.2f} l "
+            f"{x2:.2f} {y2 - r + k:.2f} {x2 - r + k:.2f} {y2:.2f} "
+            f"{x2 - r:.2f} {y2:.2f} c "
+            f"{x + r:.2f} {y2:.2f} l "
+            f"{x + r - k:.2f} {y2:.2f} {x:.2f} {y2 - r + k:.2f} "
+            f"{x:.2f} {y2 - r:.2f} c "
+            f"{x:.2f} {y + r:.2f} l "
+            f"{x:.2f} {y + r - k:.2f} {x + r - k:.2f} {y:.2f} "
+            f"{x + r:.2f} {y:.2f} c h ")
+
+
+def _mal_befehl(fuell, rand) -> str:
+    if fuell is not None and rand is not None:
+        return "B\n"
+    return "f\n" if fuell is not None else "S\n"
+
+
+def seite_als_pdf(seite: Seite) -> bytes:
+    H = seite.hoehe
+    c = [f"1 J 1 j\n"]
+    for e in seite.elemente:
+        if e[0] in ("rect", "kreis"):
+            if e[0] == "rect":
+                _, x, y, w, h, r, fuell, rnd, bre, gestr = e
+                pfad = (_pdf_rundrect(x, H - y - h, w, h, r) if r > 0
+                        else f"{x:.2f} {H - y - h:.2f} {w:.2f} {h:.2f} re ")
+            else:
+                _, cx, cy, r, fuell, rnd, bre, gestr = e
+                pfad = _pdf_kreis(cx, H - cy, r)
+            if fuell is None and rnd is None:
+                continue
+            if fuell is not None:
+                c.append(f"{fuell[0]:.3f} {fuell[1]:.3f} {fuell[2]:.3f} rg\n")
+            if rnd is not None:
+                c.append(f"{rnd[0]:.3f} {rnd[1]:.3f} {rnd[2]:.3f} RG\n"
+                         f"{bre:.2f} w\n")
+                c.append("[2.6 2.2] 0 d\n" if gestr else "[] 0 d\n")
+            c.append(pfad + _mal_befehl(fuell, rnd))
+        else:
+            _, x, basis, txt, gr, farbe, anker, fett = e
+            if not txt:
+                continue
+            b = text_breite(txt, gr, fett)
+            if anker == "middle":
+                x -= b / 2
+            elif anker == "end":
+                x -= b
+            c.append(f"{farbe[0]:.3f} {farbe[1]:.3f} {farbe[2]:.3f} rg\n"
+                     f"BT /{'F2' if fett else 'F1'} {gr:.2f} Tf "
+                     f"{x:.2f} {H - basis:.2f} Td ")
+            c.append(b"(".decode() + _pdf_str(txt).decode("latin-1")
+                     + ") Tj ET\n")
+    strom = "".join(c).encode("latin-1")
+    komprimiert = zlib.compress(strom)
+
+    objekte = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        (f"<< /Type /Pages /Kids [3 0 R] /Count 1 >>").encode(),
+        (f"<< /Type /Page /Parent 2 0 R /MediaBox "
+         f"[0 0 {seite.breite:.2f} {seite.hoehe:.2f}] /Resources "
+         f"<< /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>").encode(),
+        (b"<< /Length " + str(len(komprimiert)).encode()
+         + b" /Filter /FlateDecode >>\nstream\n" + komprimiert
+         + b"\nendstream"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+        b"/Encoding /WinAnsiEncoding >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold "
+        b"/Encoding /WinAnsiEncoding >>",
+    ]
+    aus = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    pos = []
+    for i, obj in enumerate(objekte, 1):
+        pos.append(len(aus))
+        aus += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref = len(aus)
+    aus += f"xref\n0 {len(objekte) + 1}\n".encode()
+    aus += b"0000000000 65535 f \n"
+    for p in pos:
+        aus += f"{p:010d} 00000 n \n".encode()
+    aus += (f"trailer\n<< /Size {len(objekte) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref}\n%%EOF\n").encode()
+    return bytes(aus)
+
+
+def schreibe_pdf(teile, cfg: Konfig, seed: int, pfad: str, art: str):
+    with open(pfad, "wb") as fh:
+        fh.write(seite_als_pdf(baue_seite(teile, cfg, seed, art)))
+
+
+# ---------------------------------------------------------------------------
+# Ausgabe: PNG
+# ---------------------------------------------------------------------------
+
+def _finde_schrift(fett: bool):
+    """Sucht eine TrueType-Schrift auf dem System (Windows/macOS/Linux)."""
+    kandidaten = [
+        "DejaVuSans-Bold.ttf" if fett else "DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans%s.ttf"
+        % ("-Bold" if fett else ""),
+        "/usr/share/fonts/dejavu/DejaVuSans%s.ttf"
+        % ("-Bold" if fett else ""),
+        r"C:\Windows\Fonts\%s" % ("arialbd.ttf" if fett else "arial.ttf"),
+        r"C:\Windows\Fonts\%s" % ("segoeuib.ttf" if fett else "segoeui.ttf"),
+        "/System/Library/Fonts/Supplemental/Arial%s.ttf"
+        % (" Bold" if fett else ""),
+        "/Library/Fonts/Arial%s.ttf" % (" Bold" if fett else ""),
+    ]
+    from PIL import ImageFont
+    for name in kandidaten:
+        try:
+            return ImageFont.truetype(name, 40)
+        except (OSError, IOError):
+            continue
+    return None
+
+
+def _png_mit_pillow(seite: Seite, pfad: str, skala: float) -> bool:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+
+    ss = 2  # Überabtastung für weiche Kanten
+    s = skala * ss
+    bild = Image.new("RGB", (round(seite.breite * s), round(seite.hoehe * s)),
+                     rgb255(rgb("#eef1f5")))
+    d = ImageDraw.Draw(bild)
+    basis = {False: _finde_schrift(False), True: _finde_schrift(True)}
+
+    def schrift(gr, fett):
+        f = basis[fett]
+        if f is None:
+            return ImageFont.load_default(), False
+        return f.font_variant(size=max(1, round(gr * s))), True
+
+    for e in seite.elemente:
+        if e[0] == "rect":
+            _, x, y, w, h, r, fuell, rnd, bre, gestr = e
+            kasten = [x * s, y * s, (x + w) * s, (y + h) * s]
+            if r > 0:
+                d.rounded_rectangle(kasten, radius=r * s,
+                                    fill=rgb255(fuell) if fuell else None,
+                                    outline=rgb255(rnd) if rnd else None,
+                                    width=max(1, round(bre * s)))
+            else:
+                d.rectangle(kasten, fill=rgb255(fuell) if fuell else None,
+                            outline=rgb255(rnd) if rnd else None,
+                            width=max(1, round(bre * s)))
+        elif e[0] == "kreis":
+            _, cx, cy, r, fuell, rnd, bre, gestr = e
+            d.ellipse([(cx - r) * s, (cy - r) * s, (cx + r) * s, (cy + r) * s],
+                      fill=rgb255(fuell) if fuell else None,
+                      outline=rgb255(rnd) if rnd else None,
+                      width=max(1, round(bre * s)))
+        else:
+            _, x, y, txt, gr, farbe, anker, fett = e
+            if not txt:
+                continue
+            f, echt = schrift(gr, fett)
+            if echt:
+                d.text((x * s, y * s), txt, font=f, fill=rgb255(farbe),
+                       anchor={"start": "ls", "middle": "ms",
+                               "end": "rs"}[anker])
+            else:  # Notnagel: Standard-Bitmapschrift ohne Anker-Unterstützung
+                b = text_breite(txt, gr, fett) * s
+                dx = {"start": 0, "middle": -b / 2, "end": -b}[anker]
+                d.text((x * s + dx, y * s - gr * s * 0.78), txt,
+                       font=f, fill=rgb255(farbe))
+
+    if ss > 1:
+        bild = bild.resize((round(seite.breite * skala),
+                            round(seite.hoehe * skala)), Image.LANCZOS)
+    bild.save(pfad)
+    return True
+
+
+def rgb255(farbe):
+    return tuple(round(k * 255) for k in farbe)
+
+
+def _finde_browser():
+    namen = ["chromium", "chromium-browser", "google-chrome", "chrome",
+             "msedge", "microsoft-edge"]
+    pfade = [
+        "/opt/pw-browsers/chromium",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ]
+    import shutil
+    for n in namen:
+        p = shutil.which(n)
+        if p:
+            return p
+    for p in pfade:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _png_mit_browser(teile, cfg, seed, pfad, art, breite_px) -> bool:
+    """Notlösung ohne Pillow: HTML im Browser aufnehmen."""
+    browser = _finde_browser()
+    if browser is None:
+        return False
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        html = os.path.join(tmp, "seite.html")
+        schreibe_html(teile, cfg, seed, html, art)
+        hoehe_px = round(breite_px * 1.45)
+        try:
+            subprocess.run(
+                [browser, "--headless", "--disable-gpu", "--no-sandbox",
+                 "--hide-scrollbars", f"--screenshot={os.path.abspath(pfad)}",
+                 f"--window-size={breite_px},{hoehe_px}",
+                 "file://" + os.path.abspath(html)],
+                check=True, timeout=90,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (subprocess.SubprocessError, OSError):
+            return False
+    return os.path.exists(pfad)
+
+
+def schreibe_png(teile, cfg: Konfig, seed: int, pfad: str, art: str,
+                 dpi: int = 150) -> str:
+    """Schreibt eine PNG-Datei. Rückgabe: der benutzte Weg."""
+    seite = baue_seite(teile, cfg, seed, art)
+    if _png_mit_pillow(seite, pfad, dpi / 72.0):
+        return "Pillow"
+    if _png_mit_browser(teile, cfg, seed, pfad, art,
+                        round(seite.breite * dpi / 72.0)):
+        return "Browser"
+    raise RuntimeError(
+        "PNG-Ausgabe nicht möglich: weder Pillow noch ein Chrome/Edge-Browser "
+        "gefunden. Abhilfe: 'pip install pillow' (in PyCharm: rechts unten im "
+        "Python-Interpreter-Menü) — die PDF-Ausgabe funktioniert immer.")
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +1491,27 @@ def frage_janein(text, default: bool) -> bool:
         if roh in ("n", "nein", "no"):
             return False
         print("  Bitte j oder n eingeben.")
+
+
+def frage_formate(formate, basis):
+    """Fragt die gewünschten Ausgabeformate ab. Aufgabe und Lösung werden
+    immer als getrennte Dateien geschrieben."""
+    print("\nAusgabeformate (Aufgabe und Lösung jeweils als eigene Datei):")
+    gewaehlt = set()
+    if frage_janein("  HTML (Bildschirm und Browser-Druck)?",
+                    "html" in formate):
+        gewaehlt.add("html")
+    if frage_janein("  PDF (druckfertig, Vektor)?", "pdf" in formate):
+        gewaehlt.add("pdf")
+    if frage_janein("  PNG (Bilddatei)?", "png" in formate):
+        gewaehlt.add("png")
+    if frage_janein("  JSON (Rohdaten)?", "json" in formate):
+        gewaehlt.add("json")
+    if gewaehlt:
+        basis = frage("Basisname der Dateien", basis, str,
+                      lambda v: bool(str(v).strip()), "Bitte einen Namen "
+                      "angeben.")
+    return gewaehlt, str(basis).strip()
 
 
 def interaktiv(cfg: Konfig) -> Konfig:
@@ -900,10 +1591,44 @@ def parse_args(argv):
     p.add_argument("--luegner", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--signatur", default="")
-    p.add_argument("--html", default="mastermind_kette.html",
-                   help="HTML-Ausgabedatei ('-' = keine)")
-    p.add_argument("--json", default=None, help="JSON-Ausgabedatei")
+    p.add_argument("--formate", default="html",
+                   help="Ausgabeformate, mit Komma getrennt: "
+                        "html, pdf, png, json (oder 'alle')")
+    p.add_argument("--basis", default="mastermind_kette",
+                   help="Basisname der Ausgabedateien; Aufgabe und Lösung "
+                        "werden getrennt geschrieben")
+    p.add_argument("--dpi", type=int, default=150,
+                   help="Auflösung der PNG-Ausgabe")
     return p.parse_args(argv)
+
+
+def schreibe_dateien(teile, cfg: Konfig, seed: int, formate, basis: str,
+                     dpi: int):
+    """Schreibt alle gewünschten Formate; Aufgabe und Lösung getrennt."""
+    erzeugt = []
+    for kuerzel in ("html", "pdf", "png"):
+        if kuerzel not in formate:
+            continue
+        for art, endung in (("aufgabe", "aufgabe"), ("loesung", "loesung")):
+            pfad = f"{basis}_{endung}.{kuerzel}"
+            if kuerzel == "html":
+                schreibe_html(teile, cfg, seed, pfad, art)
+                erzeugt.append(pfad)
+            elif kuerzel == "pdf":
+                schreibe_pdf(teile, cfg, seed, pfad, art)
+                erzeugt.append(pfad)
+            else:
+                try:
+                    weg = schreibe_png(teile, cfg, seed, pfad, art, dpi)
+                    erzeugt.append(f"{pfad}  (über {weg})")
+                except RuntimeError as fehler:
+                    print(f"\n{fehler}", file=sys.stderr)
+                    break
+    if "json" in formate:
+        pfad = f"{basis}.json"
+        schreibe_json(teile, cfg, seed, pfad)
+        erzeugt.append(pfad)
+    return erzeugt
 
 
 def main(argv=None):
@@ -914,8 +1639,16 @@ def main(argv=None):
                  wiederholung=not args.ohne_wiederholung,
                  modus=args.modus, kette=args.kette, luegner=args.luegner,
                  seed=args.seed, signatur=args.signatur)
+    formate = {f.strip().lower() for f in args.formate.split(",") if f.strip()}
+    if "alle" in formate:
+        formate = {"html", "pdf", "png", "json"}
+    basis = args.basis
     if not args.auto:
         cfg = interaktiv(cfg)
+        formate, basis = frage_formate(formate, basis)
+    unbekannt = formate - {"html", "pdf", "png", "json"}
+    if unbekannt:
+        sys.exit(f"Unbekanntes Format: {', '.join(sorted(unbekannt))}")
 
     if not cfg.wiederholung and cfg.farben < cfg.laenge:
         sys.exit("Ohne Wiederholung braucht es mindestens so viele Farben "
@@ -939,13 +1672,11 @@ def main(argv=None):
           file=sys.stderr)
 
     drucke_konsole(teile, cfg, seed)
-    if args.html and args.html != "-":
-        schreibe_html(teile, cfg, seed, args.html)
-        print(f"\nHTML geschrieben: {args.html} (druckfertig, Lösungen "
-              f"eingeklappt)")
-    if args.json:
-        schreibe_json(teile, cfg, seed, args.json)
-        print(f"JSON geschrieben: {args.json}")
+    erzeugt = schreibe_dateien(teile, cfg, seed, formate, basis, args.dpi)
+    if erzeugt:
+        print("\nGeschriebene Dateien:")
+        for name in erzeugt:
+            print(f"  {name}")
 
 
 if __name__ == "__main__":
