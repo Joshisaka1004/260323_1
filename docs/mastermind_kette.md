@@ -105,12 +105,20 @@ wird das über zwei Schalter:
 ```bash
 --formate html,pdf,png,json     # oder 'alle'
 --basis mein_raetsel            # Basisname der Dateien
+--ordner ~/Buch/Kapitel3        # Ausgabeordner (wird angelegt)
 --dpi 150                       # Auflösung der PNG-Ausgabe
 ```
 
 Daraus entstehen z. B. `mein_raetsel_aufgabe.pdf` und
-`mein_raetsel_loesung.pdf`. Im interaktiven Modus fragt das Skript die
-Formate am Ende ab.
+`mein_raetsel_loesung.pdf`. Im interaktiven Modus fragt das Skript am Ende
+Formate, Basisname und Ordner ab.
+
+**Ausgabeordner:** Ohne Angabe landen die Dateien im Unterordner `raetsel`
+**neben der Skriptdatei** — also z. B. `scripts/raetsel/`. Bewusst nicht im
+aktuellen Arbeitsverzeichnis: In PyCharm und ähnlichen Umgebungen ist das oft
+ein anderer Ordner als der, in dem das Skript liegt, und die Dateien wären
+schwer wiederzufinden. Ein eigener Ordner (auch mehrstufig, `~` erlaubt) wird
+bei Bedarf automatisch angelegt; am Ende nennt das Skript den vollen Pfad.
 
 | Format | Inhalt |
 | --- | --- |

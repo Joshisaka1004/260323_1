@@ -1654,7 +1654,7 @@ def frage_janein(text, default: bool) -> bool:
         print("  Bitte j oder n eingeben.")
 
 
-def frage_formate(formate, basis):
+def frage_formate(formate, basis, ordner):
     """Fragt die gewünschten Ausgabeformate ab. Aufgabe und Lösung werden
     immer als getrennte Dateien geschrieben."""
     print("\nAusgabeformate (Aufgabe und Lösung jeweils als eigene Datei):")
@@ -1672,7 +1672,12 @@ def frage_formate(formate, basis):
         basis = frage("Basisname der Dateien", basis, str,
                       lambda v: bool(str(v).strip()), "Bitte einen Namen "
                       "angeben.")
-    return gewaehlt, str(basis).strip()
+        print(f"\nAusgabeordner (wird angelegt, falls er noch nicht "
+              f"existiert).")
+        ordner = frage("Ordner", ordner, str,
+                       lambda v: bool(str(v).strip()),
+                       "Bitte einen Ordner angeben.")
+    return gewaehlt, str(basis).strip(), str(ordner).strip()
 
 
 def interaktiv(cfg: Konfig) -> Konfig:
@@ -1797,37 +1802,70 @@ def parse_args(argv):
     p.add_argument("--basis", default="mastermind_kette",
                    help="Basisname der Ausgabedateien; Aufgabe und Lösung "
                         "werden getrennt geschrieben")
+    p.add_argument("--ordner", default=None,
+                   help="Ausgabeordner (Standard: Unterordner "
+                        f"'{STANDARD_ORDNER}' neben der Skriptdatei); "
+                        "wird bei Bedarf angelegt")
     p.add_argument("--dpi", type=int, default=150,
                    help="Auflösung der PNG-Ausgabe")
     return p.parse_args(argv)
 
 
+STANDARD_ORDNER = "raetsel"
+
+
+def standard_ordner() -> str:
+    """Unterordner neben der Skriptdatei — unabhängig davon, welches
+    Arbeitsverzeichnis die Entwicklungsumgebung gerade gesetzt hat."""
+    try:
+        heimat = os.path.dirname(os.path.abspath(__file__))
+    except NameError:            # z. B. interaktive Konsole
+        heimat = os.getcwd()
+    return os.path.join(heimat, STANDARD_ORDNER)
+
+
+def bereite_ordner(ordner: str) -> str:
+    """Legt den Ausgabeordner an (auch mehrstufig) und gibt ihn absolut
+    zurück. Bricht mit klarer Meldung ab, wenn das nicht geht."""
+    ordner = os.path.abspath(os.path.expanduser(str(ordner).strip()))
+    try:
+        os.makedirs(ordner, exist_ok=True)
+    except OSError as fehler:
+        sys.exit(f"Ausgabeordner '{ordner}' lässt sich nicht anlegen: "
+                 f"{fehler}")
+    if not os.access(ordner, os.W_OK):
+        sys.exit(f"In den Ausgabeordner '{ordner}' darf nicht geschrieben "
+                 f"werden.")
+    return ordner
+
+
 def schreibe_dateien(teile, cfg: Konfig, seed: int, formate, basis: str,
-                     dpi: int):
+                     dpi: int, ordner: str):
     """Schreibt alle gewünschten Formate; Aufgabe und Lösung getrennt."""
+    voll = os.path.join(ordner, basis)
     erzeugt = []
     for kuerzel in ("html", "pdf", "png"):
         if kuerzel not in formate:
             continue
         for art, endung in (("aufgabe", "aufgabe"), ("loesung", "loesung")):
-            pfad = f"{basis}_{endung}.{kuerzel}"
+            pfad = f"{voll}_{endung}.{kuerzel}"
+            name = f"{basis}_{endung}.{kuerzel}"
             if kuerzel == "html":
                 schreibe_html(teile, cfg, seed, pfad, art)
-                erzeugt.append(pfad)
+                erzeugt.append(name)
             elif kuerzel == "pdf":
                 schreibe_pdf(teile, cfg, seed, pfad, art)
-                erzeugt.append(pfad)
+                erzeugt.append(name)
             else:
                 try:
                     weg = schreibe_png(teile, cfg, seed, pfad, art, dpi)
-                    erzeugt.append(f"{pfad}  (über {weg})")
+                    erzeugt.append(f"{name}  (über {weg})")
                 except RuntimeError as fehler:
                     print(f"\n{fehler}", file=sys.stderr)
                     break
     if "json" in formate:
-        pfad = f"{basis}.json"
-        schreibe_json(teile, cfg, seed, pfad)
-        erzeugt.append(pfad)
+        schreibe_json(teile, cfg, seed, f"{voll}.json")
+        erzeugt.append(f"{basis}.json")
     return erzeugt
 
 
@@ -1847,9 +1885,10 @@ def main(argv=None):
     if "alle" in formate:
         formate = {"html", "pdf", "png", "json"}
     basis = args.basis
+    ordner = args.ordner if args.ordner else standard_ordner()
     if not args.auto:
         cfg = interaktiv(cfg)
-        formate, basis = frage_formate(formate, basis)
+        formate, basis, ordner = frage_formate(formate, basis, ordner)
     unbekannt = formate - {"html", "pdf", "png", "json"}
     if unbekannt:
         sys.exit(f"Unbekanntes Format: {', '.join(sorted(unbekannt))}")
@@ -1891,11 +1930,14 @@ def main(argv=None):
           file=sys.stderr)
 
     drucke_konsole(teile, cfg, seed)
-    erzeugt = schreibe_dateien(teile, cfg, seed, formate, basis, args.dpi)
-    if erzeugt:
-        print("\nGeschriebene Dateien:")
-        for name in erzeugt:
-            print(f"  {name}")
+    if formate:
+        ordner = bereite_ordner(ordner)
+        erzeugt = schreibe_dateien(teile, cfg, seed, formate, basis,
+                                   args.dpi, ordner)
+        if erzeugt:
+            print(f"\nGeschrieben nach {ordner}")
+            for name in erzeugt:
+                print(f"  {name}")
 
 
 # ---------------------------------------------------------------------------
