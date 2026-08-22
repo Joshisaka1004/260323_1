@@ -24,14 +24,18 @@ python3 scripts/mastermind_kette.py --auto --teile 5 --gabel
 
 # Wort-Mastermind: alle Zeilen und die Lösung sind echte deutsche Wörter
 python3 scripts/mastermind_kette.py --auto --zeichen wort-de --teile 3
+
+# Englische Blätter auf der höchsten Stufe
+python3 scripts/mastermind_kette.py --auto --sprache en --level evil --teile 2
 ```
 
 Die interaktive Abfrage fragt alles Wesentliche ab (Enter übernimmt den
-Vorschlag): Anzahl Teile (1–8), Zeichensatz (farbige Kugeln, Ziffern,
-deutsche oder englische Wörter), Codelänge bzw. Wortlänge, Symbolzahl,
-Wiederholung ja/nein, Zeilen pro Teil, Treffer-Obergrenzen, Wertungsmodus,
-Kettenrichtung, Gabel- und Lügner-Variante, Seed, Signatur und zum Schluss
-die Ausgabeformate.
+Vorschlag): Sprache der Blätter, Anzahl Teile (1–8), Zeichensatz (farbige
+Kugeln, Ziffern, deutsche oder englische Wörter), Schwierigkeitsstufe,
+Codelänge bzw. Wortlänge, Symbolzahl, Wiederholung ja/nein, Zeilen pro Teil,
+Treffer-Obergrenzen, Wertungsmodus, Kettenrichtung, Gabel- und
+Lügner-Variante, Seed, Signatur und zum Schluss Ausgabeformate, Basisname
+und Ordner.
 
 ## Garantien — geprüft, nicht geraten
 
@@ -51,6 +55,51 @@ Enumeration** aller möglichen Codes (bis 2 Mio. Codes, d. h. z. B. 8 Farben ×
 
 Reicht die gewünschte Zeilenzahl für Eindeutigkeit nicht aus (z. B. im
 Nur-Schwarz-Modus), erhöht der Generator sie selbstständig und meldet das.
+
+## Schwierigkeitsstufen
+
+`--level easy|medium|hard|veryhard|evil` (interaktiv gleich nach dem
+Zeichensatz). Die Stufe ist **kein Etikett, sondern ein gemessener Wert**:
+
+1. Sie setzt passende Vorgaben (Codelänge, Symbolzahl, Treffer-Obergrenzen,
+   Wertungsmodus, bei Wörtern auch die Lügner-Variante). Jede davon lässt
+   sich einzeln überschreiben — was Du selbst angibst, bleibt stehen.
+2. Nach dem Bau bekommt jeder Teil einen Punktwert. Gemessen wird der Weg
+   eines *klugen* Lösers: Er nimmt stets die Zeile zuerst, die am meisten
+   aussiebt. Der Wert ist damit unabhängig von der Zeilenreihenfolge auf dem
+   Blatt und steigt mit Suchraum, verbleibenden Kandidaten unterwegs und
+   Magerkeit der Hinweise.
+3. Nur Teile, deren Wert im Band der gewünschten Stufe liegt, werden
+   angenommen. Klappt das nach mehreren Anläufen nicht, nimmt der Generator
+   den nächstbesten und **sagt es** („Stufe hard war hier nicht erreichbar").
+
+Die Schwellen stammen aus gemessenen Verteilungen (`LEVEL_SCHWELLEN_CODE`
+bzw. `LEVEL_SCHWELLEN_WORT`). Zwei getrennte Skalen, weil eine Wortliste
+einen viel kleineren Kandidatenraum hat als ein Farbcode: Ein „evil"
+Wort-Rätsel ist etwas anderes als ein „evil" Farb-Rätsel — die Stufe gilt
+jeweils **innerhalb ihrer Rätselart**.
+
+Zwei ehrliche Einschränkungen:
+
+* Die natürliche Streuung ist breiter als ein Stufenband. Einzelne Teile
+  landen deshalb gelegentlich eine Stufe daneben; die Kopfzeile des Blattes
+  nennt immer die tatsächlich erreichte (höchste) Stufe, nicht die
+  gewünschte.
+* Rechenzeit steigt mit der Stufe. Richtwerte je Teil: easy/medium unter
+  4 s, hard und veryhard rund 3–10 s, **evil mit Farben oder Ziffern etwa
+  15–30 s**. Wort-Rätsel sind auf allen Stufen deutlich schneller (unter 2 s).
+
+## Sprache der Blätter
+
+`--sprache de|en` (interaktiv die allererste Frage). Betrifft alle Texte auf
+den erzeugten Blättern — Titel, Regeln, Legende, Kartenköpfe, Kettenhinweise,
+Lösungsangaben — sowie die Konsolenvorschau und die Dateinamen
+(`…_puzzle.pdf` / `…_solutions.pdf` statt `…_aufgabe` / `…_loesung`). Die
+interaktive Abfrage selbst bleibt immer deutsch.
+
+Alle Blatttexte stehen gesammelt im Katalog `TEXTE` am Anfang des Skripts
+(je ein deutscher und ein englischer Eintrag) — dort lassen sich
+Formulierungen anpassen oder weitere Sprachen ergänzen.
 
 ## Zeichensätze
 

@@ -79,8 +79,231 @@ FARBEN = {
     "N": ("Braun", "#9c6b3f", "#ffffff"),
 }
 
+FARBEN_EN = {"R": "red", "G": "green", "B": "blue", "Y": "yellow",
+             "O": "orange", "V": "violet", "T": "turquoise", "P": "pink",
+             "W": "white", "N": "brown"}
+
+
+def farbname(sym: str, cfg) -> str:
+    return (FARBEN_EN[sym] if getattr(cfg, "sprache", "de") == "en"
+            else FARBEN[sym][0])
+
+
 MAX_RAUM = 2_000_000   # Obergrenze farben**laenge für die Enumeration
+
+LEVEL = ("easy", "medium", "hard", "veryhard", "evil")
+
+# Punkteschwellen zwischen den Stufen — aus gemessenen Verteilungen (siehe
+# docs). Code- und Wort-Rätsel haben eigene Skalen: Der Kandidatenraum einer
+# Wortliste ist viel kleiner, ein "evil" Wort-Rätsel ist deshalb etwas
+# anderes als ein "evil" Farb-Rätsel. Die Stufe gilt jeweils innerhalb
+# ihrer Rätselart.
+LEVEL_SCHWELLEN_CODE = (12.0, 15.0, 16.5, 18.5)
+LEVEL_SCHWELLEN_WORT = (12.0, 13.3, 15.0, 16.8)
+
+# Parameter, mit denen die Stufen erreicht werden. Sie gelten nur, soweit
+# der Benutzer nichts anderes vorgibt.
+LEVEL_VORGABEN_CODE = {
+    "easy":     dict(laenge=4, farben=6, max_schwarz=2, max_treffer=3),
+    "medium":   dict(laenge=5, farben=7, max_schwarz=1, max_treffer=2),
+    "hard":     dict(laenge=5, farben=9, max_schwarz=1, max_treffer=2),
+    "veryhard": dict(laenge=5, farben=8, max_schwarz=1, max_treffer=2,
+                     modus="schlampig"),
+    "evil":     dict(laenge=6, farben=8, max_schwarz=1, max_treffer=2,
+                     modus="schlampig"),
+}
+LEVEL_VORGABEN_WORT = {
+    "easy":     dict(laenge=5, max_schwarz=2, max_treffer=3),
+    "medium":   dict(laenge=5, max_schwarz=1, max_treffer=2),
+    "hard":     dict(laenge=6, max_schwarz=1, max_treffer=2,
+                     modus="schlampig"),
+    "veryhard": dict(laenge=5, max_schwarz=1, max_treffer=2, luegner=True),
+    "evil":     dict(laenge=6, max_schwarz=1, max_treffer=2,
+                     modus="schlampig", luegner=True),
+}
+
+
+def ist_wortmodus(zeichen: str) -> bool:
+    return zeichen in ("wort-de", "wort-en")
+
+
+def level_schwellen(cfg) -> tuple:
+    return (LEVEL_SCHWELLEN_WORT if ist_wortmodus(cfg.zeichen)
+            else LEVEL_SCHWELLEN_CODE)
+
+
+def level_vorgaben(level: str, zeichen: str) -> dict:
+    tabelle = (LEVEL_VORGABEN_WORT if ist_wortmodus(zeichen)
+               else LEVEL_VORGABEN_CODE)
+    return dict(tabelle[level])
+
+
+def level_band(cfg) -> tuple:
+    """Punktebereich (unten, oben), in dem die gewünschte Stufe liegt."""
+    s = level_schwellen(cfg)
+    i = LEVEL.index(cfg.level)
+    unten = s[i - 1] if i > 0 else float("-inf")
+    oben = s[i] if i < len(s) else float("inf")
+    return unten, oben
 MAX_EXTRA_ZEILEN = 9   # so weit darf der Generator die Zeilenzahl anheben
+
+
+# ---------------------------------------------------------------------------
+# Sprachen: Alle Texte, die auf den Rätselblättern landen
+# ---------------------------------------------------------------------------
+# Die interaktive Abfrage bleibt immer deutsch; nur die erzeugten Blätter
+# (und die Konsolenvorschau) folgen der gewählten Sprache.
+
+SPRACHEN = ("de", "en")
+
+TEXTE = {
+    "titel":          ("MASTERMIND-KETTE", "MASTERMIND CHAIN"),
+    "titel_loesung":  ("MASTERMIND-KETTE — LÖSUNGEN",
+                       "MASTERMIND CHAIN — SOLUTIONS"),
+    "teil":           ("TEIL {n}", "PART {n}"),
+    "stellen":        ("{n} Stellen", "{n} positions"),
+    "buchstaben":     ("{n} Buchstaben", "{n} letters"),
+    "farben_n":       ("{n} Farben", "{n} colours"),
+    "ziffern_bis":    ("Ziffern 0-{n}", "digits 0-{n}"),
+    "woerter_de":     ("echte deutsche Wörter", "real German words"),
+    "woerter_en":     ("echte englische Wörter", "real English words"),
+    "wdh_ja":         ("Wiederholungen erlaubt", "repeats allowed"),
+    "wdh_nein":       ("ohne Wiederholung", "no repeats"),
+    "grenzen":        ("max. {s} schwarz / {t} Treffer je Zeile",
+                       "max {s} black / {t} pegs per row"),
+    "modus_standard": ("Schwarz/Weiß-Wertung", "black/white scoring"),
+    "modus_schlampig": ("teils nur Treffersumme", "partly totals only"),
+    "modus_schwarz":  ("nur schwarze Stifte", "black pegs only"),
+    "var_luegner":    ("Lügner-Variante", "liar variant"),
+    "var_rueckwaerts": ("Rückwärts-Kette", "reversed chain"),
+    "var_gabel":      ("Gabel-Kette", "forked chain"),
+    "level_seed":     ("Level: {lvl} · Seed {seed}", "level: {lvl} · seed {seed}"),
+    "kopf_sw":        ("schwarz / weiß", "black / white"),
+    "kopf_wertung":   ("Wertung", "score"),
+    "kopf_schwarz":   ("schwarz", "black"),
+    "kopf_level":     ("Level: {lvl}", "level: {lvl}"),
+    "badge_treffer":  ("{n} Treffer", "{n} hits"),
+    "rueckwaerts_kurz": (" rückwärts", " reversed"),
+    "kette_hinweis":  ("Zeile {label}: Lösungscode aus Teil {n}{r} eintragen",
+                       "Row {label}: enter the solution code from part {n}{r}"),
+    "kette_html":     ("Code aus Teil {n}{r}", "Code from part {n}{r}"),
+    "kette_rueck_html": (" (rückwärts!)", " (reversed!)"),
+    "legende_farben": ("Farben: ", "Colours: "),
+    "legende_ziffern": ("Ziffern: 0 bis {n}", "Digits: 0 to {n}"),
+    "legende_wort":   ("Wortschatz: {n} {sprache} Wörter mit {l} Buchstaben",
+                       "Vocabulary: {n} {sprache} words of {l} letters"),
+    "sprache_de":     ("deutsche", "German"),
+    "sprache_en":     ("englische", "English"),
+    "sol_code":       ("Code: {c}", "Code: {c}"),
+    "sol_luege":      ("Lügenzeile: {i} (wahr: {w})",
+                       "Lying row: {i} (true: {w})"),
+    "sol_kette":      ("Zeile {label} aus Teil {n}: {c}",
+                       "Row {label} from part {n}: {c}"),
+    "sol_fuss":       ("Zu jeder Aufgabe gibt es genau eine Lösung — per "
+                       "vollständiger Enumeration geprüft.",
+                       "Every puzzle has exactly one solution — verified by "
+                       "complete enumeration."),
+    # --- Regeln ---
+    "r_stifte":       ("Schwarz ● = richtiges Symbol am richtigen Platz; "
+                       "Weiß ○ = richtiges Symbol am falschen Platz.",
+                       "Black ● = right symbol in the right place; "
+                       "white ○ = right symbol in the wrong place."),
+    "r_strich":       ("Ein Strich (–) statt Stiften bedeutet: null Treffer — "
+                       "KEIN Symbol dieser Zeile kommt im Code vor. Das ist "
+                       "oft der stärkste Hinweis!",
+                       "A dash (–) instead of pegs means zero hits — NONE of "
+                       "this row's symbols occurs in the code. Often the "
+                       "strongest clue!"),
+    "r_strich_sw":    ("Ein Strich (–) statt Stiften bedeutet: null Treffer — "
+                       "kein Symbol dieser Zeile steht an der richtigen "
+                       "Position.",
+                       "A dash (–) instead of pegs means zero hits — no "
+                       "symbol of this row sits in the right position."),
+    "r_schlampig":    ("Bei Zeilen mit Treffer-Feld [n Treffer] war der "
+                       "Wertende schlampig: Es ist nur die GESAMTZAHL der "
+                       "Treffer bekannt, nicht die Aufteilung schwarz/weiß.",
+                       "For rows showing [n hits] the scorer was sloppy: only "
+                       "the TOTAL number of hits is known, not the split into "
+                       "black and white."),
+    "r_nurschwarz":   ("In diesem Rätsel werden NUR schwarze Stifte gewertet; "
+                       "weiße Hinweise gibt es nicht.",
+                       "This puzzle scores ONLY black pegs; there are no "
+                       "white clues."),
+    "r_wort":         ("Der Lösungscode und jede Tipp-Zeile sind ein echtes, "
+                       "gebräuchliches {sprache} Wort mit {l} Buchstaben "
+                       "(keine Eigennamen).",
+                       "The solution code and every guess row is a real, "
+                       "common {sprache} word of {l} letters (no proper "
+                       "nouns)."),
+    "r_wort_wdh":     ("Buchstaben können sich wiederholen, so wie im "
+                       "jeweiligen Wort.",
+                       "Letters may repeat, exactly as they do in the word."),
+    "r_wdh_ja":       ("{was} dürfen sich im Code wiederholen.",
+                       "{was} may repeat within the code."),
+    "r_wdh_nein":     ("Im Code kommt jede {was} höchstens einmal vor.",
+                       "Each {was} occurs at most once in the code."),
+    "was_ziffern":    ("Ziffern", "Digits"),
+    "was_farben":     ("Farben", "Colours"),
+    "was_ziffer":     ("Ziffer", "digit"),
+    "was_farbe":      ("Farbe", "colour"),
+    "r_grenzen":      ("Jede normale Zeile hat höchstens {s} Treffer in "
+                       "richtiger Position und {t} Treffer insgesamt.",
+                       "Every normal row has at most {s} hits in the right "
+                       "position and {t} hits in total."),
+    "r_luegner":      ("ACHTUNG: In jedem Teil lügt GENAU EINE normale "
+                       "Hinweiszeile (ihre Wertung ist falsch). Die "
+                       "Kettenzeile sagt immer die Wahrheit.",
+                       "CAREFUL: in every part EXACTLY ONE normal clue row "
+                       "lies (its score is wrong). The chain row always "
+                       "tells the truth."),
+    "r_alle_noetig":  ("Trotzdem sind alle normalen Zeilen nötig.",
+                       "Even so, every normal row is needed."),
+    "r_gabel1":       ("Das Rätsel gabelt sich: Teile ohne K-Zeile sind "
+                       "eigenständige Startpunkte zweier Stränge. Übertrage "
+                       "jeden Lösungscode{r} in die markierten K-Zeilen der "
+                       "Teile, die ihn verlangen.",
+                       "The puzzle forks: parts without a K row are the "
+                       "starting points of two strands. Copy every solution "
+                       "code{r} into the marked K rows of the parts that "
+                       "ask for it."),
+    "r_gabel2":       ("Der letzte Teil ist der Gabelpunkt: Er hat ZWEI "
+                       "Kettenzeilen (K1 und K2) und braucht die Lösungen "
+                       "beider Stränge.",
+                       "The final part is the merge point: it has TWO chain "
+                       "rows (K1 and K2) and needs both strand solutions."),
+    "r_kette":        ("Löse Teil 1. Übertrage danach jeden Lösungscode{r} in "
+                       "die markierte Kettenzeile des nächsten Teils.",
+                       "Solve part 1. Then copy each solution code{r} into "
+                       "the marked chain row of the next part."),
+    "r_kette_noetig": ("Die Schwarz/Weiß-Wertung jeder Kettenzeile ist bereits "
+                       "gegeben. Ohne jede einzelne von ihnen ist der Teil "
+                       "nicht eindeutig lösbar.",
+                       "The black/white score of every chain row is already "
+                       "given. Without each single one of them the part has "
+                       "no unique solution."),
+    "r_rueck_gross":  (" RÜCKWÄRTS", " REVERSED"),
+    # --- Konsole ---
+    "k_loesungen":    ("LÖSUNGEN (nicht weiterscrollen, wer selbst rätseln "
+                       "will!)",
+                       "SOLUTIONS (stop scrolling if you want to solve it "
+                       "yourself!)"),
+    "k_regeln":       ("Regeln:", "Rules:"),
+    "k_teil_loesung": ("  Teil {n}: {c}{extra}", "  Part {n}: {c}{extra}"),
+    "k_luegenzeile":  ("   (Lügenzeile: {i}, wahre Wertung: {w})",
+                       "   (lying row: {i}, true score: {w})"),
+    "k_kopf":         ("{l} Stellen · {f} Farben · {z} Zeilen/Teil · Seed {s}",
+                       "{l} positions · {f} colours · {z} rows/part · seed {s}"),
+    # --- Dateinamen ---
+    "datei_aufgabe":  ("aufgabe", "puzzle"),
+    "datei_loesung":  ("loesung", "solutions"),
+}
+
+
+def T(cfg, schluessel: str, **werte) -> str:
+    """Text in der gewählten Blattsprache."""
+    de, en = TEXTE[schluessel]
+    text = en if getattr(cfg, "sprache", "de") == "en" else de
+    return text.format(**werte) if werte else text
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +339,7 @@ class Teil:
     zeilen: list
     ketten: list         # 0 (Startteil), 1 (Kette) oder 2 (Gabelpunkt) Einträge
     schwierigkeit: str = "?"
+    punkte: float = 0.0
 
 
 @dataclass
@@ -129,6 +353,8 @@ class Konfig:
     wiederholung: bool = True
     modus: str = "standard"          # standard | schlampig | schwarz
     zeichen: str = "farben"          # farben | ziffern | wort-de | wort-en
+    level: str = "medium"            # easy | medium | hard | veryhard | evil
+    sprache: str = "de"              # Sprache der erzeugten Blätter: de | en
     kette: str = "direkt"            # direkt | rueckwaerts
     gabel: bool = False              # zwei Stränge, die im letzten Teil münden
     luegner: bool = False
@@ -136,6 +362,7 @@ class Konfig:
     signatur: str = ""
     # interne Suchparameter
     versuche: int = 90               # Neustarts pro Teil und Zeilenstufe
+    band_versuche: int = 5           # fertige Rätsel, bis die Stufe passen muss
     stichprobe: int = 140            # getestete Tipps pro Zeilenschritt
     endsuche: int = 6000             # getestete Tipps für die letzte Zeile
 
@@ -419,6 +646,9 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
     (quell_nummer, quell_code) — leer für Startteile, ein Eintrag in der
     normalen Kette, zwei am Gabelpunkt."""
     f = cfg.farben
+    unten, oben = level_band(cfg)
+    bester = None
+    fertige = 0
     for _ in range(cfg.versuche):
         code = rng.choice(alle)
         ketten = []
@@ -496,47 +726,95 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
 
         rng.shuffle(zeilen)
         teil = Teil(nummer, code, zeilen, ketten)
-        teil.schwierigkeit = schaetze_schwierigkeit(teil, basis, cfg)
-        return teil
-    return None
+        teil.punkte = schwierigkeit_punkte(teil, alle, cfg)
+        teil.schwierigkeit = punkte_zu_level(teil.punkte, cfg)
+        if unten <= teil.punkte < oben:
+            return teil
+        # Außerhalb der gewünschten Stufe: merken und weitersuchen.
+        fertige += 1
+        abstand = max(unten - teil.punkte, teil.punkte - oben)
+        if bester is None or abstand < bester[0]:
+            bester = (abstand, teil)
+        if fertige >= cfg.band_versuche:
+            break
+    return bester[1] if bester else None
 
 
-def schaetze_schwierigkeit(teil, basis, cfg) -> str:
-    """Heuristik: Wie lange bleibt die Kandidatenmenge groß, wenn man die
-    Zeilen der Reihe nach anwendet, und wie mager sind die Hinweise?"""
-    punkte = math.log2(max(2, len(basis))) / 2.0
+def schwierigkeit_punkte(teil, raum, cfg) -> float:
+    """Zahlenwert für die Schwierigkeit eines Teils.
+
+    Gemessen wird der Weg eines *klugen* Lösers: Er wendet die Zeilen nicht
+    der Reihe nach an, sondern jeweils die, die am meisten aussiebt. Der
+    Wert ist deshalb unabhängig davon, wie die Zeilen auf dem Blatt
+    angeordnet sind. Er steigt mit dem Suchraum, mit der Zahl der
+    Kandidaten, die unterwegs noch im Rennen bleiben, und mit der
+    Magerkeit der Hinweise. `raum` ist immer der volle Coderaum, damit
+    alle Teile eines Blattes vergleichbar bewertet werden."""
+    punkte = math.log2(max(2, len(raum))) / 2.0
+
     if cfg.luegner:
-        punkte += 4.0  # die Lügner-Suche ist per se deutlich schwerer
+        # Bei Lügnern muss jede Zeile einzeln als Lüge angenommen werden —
+        # die Arbeit vervielfacht sich mit der Zeilenzahl.
+        punkte += 3.0 + math.log2(max(2, len(teil.zeilen)))
     else:
-        cur = basis
+        # Gieriger Löser: immer die Zeile zuerst, die am stärksten filtert.
+        # Die Kettenzeilen zählen mit — der Löser hat sie ja, sobald er den
+        # Vorgängerteil gelöst hat. Sonst wirkten verkettete Teile
+        # systematisch leichter als der erste Teil desselben Blattes.
+        offen = list(teil.zeilen) + [
+            Zeile(k.tipp, k.schwarz, k.weiss, "sw", (k.schwarz, k.weiss))
+            for k in teil.ketten]
+        cur = raum
         verlauf = []
-        for z in teil.zeilen:
-            cur = filtere(cur, z.tipp, z.art, z.key, cfg.farben)
+        while offen:
+            beste = min(offen, key=lambda z: len(
+                filtere(cur, z.tipp, z.art, z.key, cfg.farben)))
+            cur = filtere(cur, beste.tipp, beste.art, beste.key, cfg.farben)
+            offen.remove(beste)
             verlauf.append(len(cur))
+        # Wie groß bleibt die Menge auf halbem Weg? Das ist der Punkt, an
+        # dem ein Mensch am meisten mitdenken muss.
         mitte = verlauf[len(verlauf) // 2] if verlauf else 2
         punkte += math.log2(max(2, mitte))
+
     mager = sum(1 for z in teil.zeilen
                 if z.wahr_schwarz + z.wahr_weiss <= 2) / len(teil.zeilen)
     punkte += 3.0 * mager
-    if cfg.modus != "standard":
-        punkte += 1.5
+    if cfg.max_schwarz == 0:
+        punkte += 1.5          # nie ein Treffer auf richtiger Position
+    if cfg.modus == "schlampig":
+        punkte += 2.0
+    elif cfg.modus == "schwarz":
+        punkte += 2.5
     if cfg.zeichen in ("wort-de", "wort-en"):
-        punkte += 3.0  # der Löser kennt den Wortvorrat nicht
-    if punkte < 9:
-        return "leicht"
-    if punkte < 12.5:
-        return "mittel"
-    return "schwer"
+        punkte += 3.0          # der Löser kennt den Wortvorrat nicht
+    return punkte
+
+
+def punkte_zu_level(punkte: float, cfg) -> str:
+    """Ordnet einen Punktwert einer der fünf Stufen zu."""
+    for stufe, grenze in zip(LEVEL, level_schwellen(cfg)):
+        if punkte < grenze:
+            return stufe
+    return LEVEL[-1]
 
 
 def generiere_puzzle(cfg: Konfig, rng: random.Random):
     alle = alle_codes(cfg)
-    for extra in range(MAX_EXTRA_ZEILEN + 1):
-        zeilen_n = cfg.zeilen + extra
-        if extra:
-            print(f"  {cfg.zeilen + extra - 1} Zeilen reichen bei diesen "
-                  f"Einstellungen nicht für Eindeutigkeit — versuche es mit "
-                  f"{zeilen_n} Zeilen pro Teil ...", file=sys.stderr)
+    # Zeilenzahlen in beide Richtungen durchprobieren: Mehr Zeilen helfen,
+    # wenn die Lösung noch nicht eindeutig wird; WENIGER Zeilen helfen, wenn
+    # ein verketteter Teil auch ohne seine Kettenzeile eindeutig bliebe —
+    # das passiert in kleinen Suchräumen (Wortlisten, Lügner-Variante).
+    folge = []
+    for d in range(MAX_EXTRA_ZEILEN + 1):
+        folge.append(cfg.zeilen + d)
+        if d and cfg.zeilen - d >= 3:
+            folge.append(cfg.zeilen - d)
+    for versuch, zeilen_n in enumerate(folge):
+        if versuch:
+            print(f"  Mit {folge[versuch - 1]} Zeilen kein gültiges Rätsel — "
+                  f"versuche es mit {zeilen_n} Zeilen pro Teil ...",
+                  file=sys.stderr)
         plan = topologie(cfg)
         teile = []
         codes = {}
@@ -552,14 +830,15 @@ def generiere_puzzle(cfg: Konfig, rng: random.Random):
             if len(teil.zeilen) != zeilen_n:
                 zusatz = (f", kommt mit {len(teil.zeilen)} "
                           f"normalen Zeilen aus")
-            print(f"  Teil {n} erzeugt "
-                  f"(Schwierigkeit: {teil.schwierigkeit}{zusatz}) ...",
-                  file=sys.stderr)
+            if teil.schwierigkeit != cfg.level:
+                zusatz += (f" — Stufe {cfg.level} war hier nicht erreichbar")
+            print(f"  Teil {n} erzeugt (Stufe: {teil.schwierigkeit}, "
+                  f"{teil.punkte:.1f} Punkte{zusatz}) ...", file=sys.stderr)
         if teile is not None:
             cfg.zeilen = zeilen_n  # damit Kopf- und Regeltexte stimmen
             return teile
     raise RuntimeError(
-        f"Auch mit {cfg.zeilen + MAX_EXTRA_ZEILEN} Zeilen pro Teil wurde "
+        f"Mit 3 bis {cfg.zeilen + MAX_EXTRA_ZEILEN} Zeilen pro Teil wurde "
         f"kein gültiges Rätsel gefunden. Tipp: mehr Farben, kürzeren Code "
         f"oder lockerere Treffer-Grenzen (--max-treffer) wählen.")
 
@@ -616,53 +895,56 @@ def code_text(code, cfg: Konfig) -> str:
     return " ".join(cfg._zeichen[i] for i in code)
 
 
-def wertung_text(art, key) -> str:
+def wertung_text(art, key, cfg) -> str:
     if art == "sw":
         s, w = key
         return "●" * s + "○" * w if (s or w) else "—"
     if art == "summe":
-        return f"[{key} Treffer]"
+        return "[" + T(cfg, "badge_treffer", n=key) + "]"
     return "●" * key if key else "—"
 
 
 def legende_text(cfg: Konfig) -> str:
     if cfg.zeichen == "farben":
-        return "Farben: " + "  ".join(f"{s}={FARBEN[s][0]}"
-                                      for s in SYMBOLE[:cfg.farben])
+        return T(cfg, "legende_farben") + "  ".join(
+            f"{s}={farbname(s, cfg)}" for s in SYMBOLE[:cfg.farben])
     if cfg.zeichen == "ziffern":
-        return f"Ziffern: 0 bis {cfg.farben - 1}"
-    sprache = "deutsche" if cfg.zeichen == "wort-de" else "englische"
-    return (f"Wortschatz: {len(cfg._woerter)} {sprache} Wörter mit "
-            f"{cfg.laenge} Buchstaben")
+        return T(cfg, "legende_ziffern", n=cfg.farben - 1)
+    sprache = T(cfg, "sprache_de" if cfg.zeichen == "wort-de"
+                else "sprache_en")
+    return T(cfg, "legende_wort", n=len(cfg._woerter), sprache=sprache,
+             l=cfg.laenge)
 
 
 def drucke_konsole(teile, cfg: Konfig, seed: int):
     b = []
     b.append("=" * 62)
-    b.append("MASTERMIND-KETTE".center(62))
-    b.append((f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
-              f"{cfg.zeilen} Zeilen/Teil · Seed {seed}").center(62))
+    b.append(T(cfg, "titel").center(62))
+    b.append(T(cfg, "k_kopf", l=cfg.laenge, f=cfg.farben,
+                z=cfg.zeilen, s=seed).center(62))
     b.append("=" * 62)
     b.append(legende_text(cfg))
     b.append("")
     for teil in teile:
-        b.append(f"TEIL {teil.nummer}   (Schwierigkeit: {teil.schwierigkeit})")
+        b.append(T(cfg, "teil", n=teil.nummer)
+                 + "   (" + T(cfg, "kopf_level", lvl=teil.schwierigkeit)
+                 + ")")
         for ki, k in enumerate(teil.ketten, 1):
             label = f"K{ki}" if len(teil.ketten) > 1 else "K "
-            richtung = ("rückwärts eingetragener "
+            richtung = (T(cfg, "rueckwaerts_kurz")
                         if cfg.kette == "rueckwaerts" else "")
-            b.append(f"  {label} {'? ' * cfg.laenge}<- {richtung}Code aus "
-                     f"Teil {k.quelle}   "
-                     f"{wertung_text('sw', (k.schwarz, k.weiss))}")
+            b.append(f"  {label} {'? ' * cfg.laenge}<- "
+                     + T(cfg, "kette_html", n=k.quelle, r=richtung)
+                     + f"   {wertung_text('sw', (k.schwarz, k.weiss), cfg)}")
         for i, z in enumerate(teil.zeilen, 1):
-            b.append(f"  {i}  {code_text(z.tipp, cfg)}   {wertung_text(z.art, z.key)}")
+            b.append(f"  {i}  {code_text(z.tipp, cfg)}   {wertung_text(z.art, z.key, cfg)}")
         b.append("")
     b.append("-" * 62)
-    b.append("Regeln:")
+    b.append(T(cfg, "k_regeln"))
     for r in regel_zeilen(cfg):
         b.append(f"  * {r}")
     b.append("")
-    b.append("LÖSUNGEN (nicht weiterscrollen, wer selbst rätseln will!)")
+    b.append(T(cfg, "k_loesungen"))
     for teil in teile:
         extra = ""
         if cfg.luegner:
@@ -670,71 +952,51 @@ def drucke_konsole(teile, cfg: Konfig, seed: int):
             lz = next(z for z in teil.zeilen if z.luege)
             wahr = wertung_text(lz.art,
                                 projektion(lz.art, lz.wahr_schwarz,
-                                           lz.wahr_weiss))
-            extra = f"   (Lügenzeile: {li}, wahre Wertung: {wahr})"
-        b.append(f"  Teil {teil.nummer}: {code_text(teil.code, cfg)}{extra}")
+                                           lz.wahr_weiss), cfg)
+            extra = T(cfg, "k_luegenzeile", i=li, w=wahr)
+        b.append(T(cfg, "k_teil_loesung", n=teil.nummer,
+                   c=code_text(teil.code, cfg), extra=extra))
     print("\n".join(b))
 
 
 def regel_zeilen(cfg: Konfig):
-    regeln = []
-    regeln.append("Schwarz ● = richtiges Symbol am richtigen Platz; "
-                  "Weiß ○ = richtiges Symbol am falschen Platz.")
-    if cfg.modus == "schwarz":
-        regeln.append("Ein Strich (–) statt Stiften bedeutet: null Treffer — "
-                      "kein Symbol dieser Zeile steht an der richtigen "
-                      "Position.")
-    else:
-        regeln.append("Ein Strich (–) statt Stiften bedeutet: null Treffer — "
-                      "KEIN Symbol dieser Zeile kommt im Code vor. Das ist "
-                      "oft der stärkste Hinweis!")
+    regeln = [T(cfg, "r_stifte")]
+    regeln.append(T(cfg, "r_strich_sw") if cfg.modus == "schwarz"
+                  else T(cfg, "r_strich"))
     if cfg.modus == "schlampig":
-        regeln.append("Bei Zeilen mit Treffer-Feld [n Treffer] war der "
-                      "Wertende schlampig: Es ist nur die GESAMTZAHL der "
-                      "Treffer bekannt, nicht die Aufteilung schwarz/weiß.")
+        regeln.append(T(cfg, "r_schlampig"))
     elif cfg.modus == "schwarz":
-        regeln.append("In diesem Rätsel werden NUR schwarze Stifte gewertet; "
-                      "weiße Hinweise gibt es nicht.")
-    if cfg.zeichen in ("wort-de", "wort-en"):
-        sprache = ("deutsches" if cfg.zeichen == "wort-de"
-                   else "englisches")
-        regeln.append(f"Der Lösungscode und jede Tipp-Zeile sind ein echtes, "
-                      f"gebräuchliches {sprache} Wort mit {cfg.laenge} "
-                      f"Buchstaben (keine Eigennamen).")
-        regeln.append("Buchstaben können sich wiederholen, so wie im "
-                      "jeweiligen Wort.")
+        regeln.append(T(cfg, "r_nurschwarz"))
+
+    if ist_wortmodus(cfg.zeichen):
+        sprache = T(cfg, "sprache_de" if cfg.zeichen == "wort-de"
+                    else "sprache_en")
+        if cfg.sprache == "de":       # "ein echtes deutsches Wort"
+            sprache = {"deutsche": "deutsches",
+                       "englische": "englisches"}.get(sprache, sprache)
+        regeln.append(T(cfg, "r_wort", sprache=sprache, l=cfg.laenge))
+        regeln.append(T(cfg, "r_wort_wdh"))
     elif cfg.wiederholung:
-        was = "Ziffern" if cfg.zeichen == "ziffern" else "Farben"
-        regeln.append(f"{was} dürfen sich im Code wiederholen.")
+        was = T(cfg, "was_ziffern" if cfg.zeichen == "ziffern"
+                else "was_farben")
+        regeln.append(T(cfg, "r_wdh_ja", was=was))
     else:
-        was = "Ziffer" if cfg.zeichen == "ziffern" else "Farbe"
-        regeln.append(f"Im Code kommt jede {was} höchstens einmal vor.")
-    regeln.append(f"Jede normale Zeile hat höchstens {cfg.max_schwarz} Treffer "
-                  f"in richtiger Position und {cfg.max_treffer} Treffer "
-                  f"insgesamt.")
-    if cfg.luegner:
-        regeln.append("ACHTUNG: In jedem Teil lügt GENAU EINE normale "
-                      "Hinweiszeile (ihre Wertung ist falsch). Die "
-                      "Kettenzeile sagt immer die Wahrheit.")
-    else:
-        regeln.append("Trotzdem sind alle normalen Zeilen nötig.")
+        was = T(cfg, "was_ziffer" if cfg.zeichen == "ziffern"
+                else "was_farbe")
+        regeln.append(T(cfg, "r_wdh_nein", was=was))
+
+    regeln.append(T(cfg, "r_grenzen", s=cfg.max_schwarz, t=cfg.max_treffer))
+    regeln.append(T(cfg, "r_luegner") if cfg.luegner
+                  else T(cfg, "r_alle_noetig"))
+
     if cfg.teile > 1:
-        rueck = " RÜCKWÄRTS" if cfg.kette == "rueckwaerts" else ""
+        rueck = T(cfg, "r_rueck_gross") if cfg.kette == "rueckwaerts" else ""
         if cfg.gabel and cfg.teile >= 3:
-            regeln.append("Das Rätsel gabelt sich: Teile ohne K-Zeile sind "
-                          "eigenständige Startpunkte zweier Stränge. Übertrage "
-                          f"jeden Lösungscode{rueck} in die markierten "
-                          "K-Zeilen der Teile, die ihn verlangen.")
-            regeln.append(f"Der letzte Teil ist der Gabelpunkt: Er hat ZWEI "
-                          f"Kettenzeilen (K1 und K2) und braucht die Lösungen "
-                          f"beider Stränge.")
+            regeln.append(T(cfg, "r_gabel1", r=rueck))
+            regeln.append(T(cfg, "r_gabel2"))
         else:
-            regeln.append(f"Löse Teil 1. Übertrage danach jeden Lösungscode"
-                          f"{rueck} in die markierte Kettenzeile des "
-                          f"nächsten Teils.")
-        regeln.append("Die Schwarz/Weiß-Wertung jeder Kettenzeile ist bereits "
-                      "gegeben. Ohne jede einzelne von ihnen ist der Teil "
-                      "nicht eindeutig lösbar.")
+            regeln.append(T(cfg, "r_kette", r=rueck))
+        regeln.append(T(cfg, "r_kette_noetig"))
     return regeln
 
 
@@ -742,14 +1004,15 @@ def regel_zeilen(cfg: Konfig):
 # Ausgabe: HTML (druckfertig, Optik wie die Buchvorlage)
 # ---------------------------------------------------------------------------
 
-def html_wertung(art, key) -> str:
+def html_wertung(art, key, cfg) -> str:
     if art == "sw":
         s, w = key
         dots = "".join('<span class="dot black"></span>' for _ in range(s))
         dots += "".join('<span class="dot white"></span>' for _ in range(w))
         return dots or '<span class="none">–</span>'
     if art == "summe":
-        return f'<span class="badge">{key}&nbsp;Treffer</span>'
+        wort = T(cfg, "badge_treffer", n=key).split(" ", 1)[1]
+        return f'<span class="badge">{key}&nbsp;{wort}</span>'
     dots = "".join('<span class="dot black"></span>' for _ in range(key))
     return dots or '<span class="none">–</span>'
 
@@ -763,10 +1026,9 @@ def html_kreis(sym_index: int, cfg: Konfig) -> str:
 def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
                   art: str = "aufgabe"):
     unter = _untertitel(cfg, teile, seed)
-    wert_kopf = {"standard": "schwarz / weiß", "schlampig": "Wertung",
-                 "schwarz": "schwarz"}[cfg.modus]
-    titel = ("MASTERMIND-KETTE" if art == "aufgabe"
-             else "MASTERMIND-KETTE — LÖSUNGEN")
+    wert_kopf = T(cfg, {"standard": "kopf_sw", "schlampig": "kopf_wertung",
+                        "schwarz": "kopf_schwarz"}[cfg.modus])
+    titel = T(cfg, "titel" if art == "aufgabe" else "titel_loesung")
 
     karten = []
     for teil in teile:
@@ -775,42 +1037,45 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
             pegs = "".join(html_kreis(x, cfg) for x in teil.code)
             zeilen_html.append(
                 f'<div class="row"><span class="idx">L</span>{pegs}</div>')
-            zusatz = [f"Code: {code_text(teil.code, cfg)}"]
+            zusatz = [T(cfg, "sol_code", c=code_text(teil.code, cfg))]
             if cfg.luegner:
                 li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
                 lz = next(z for z in teil.zeilen if z.luege)
                 wahr = wertung_text(lz.art, projektion(
-                    lz.art, lz.wahr_schwarz, lz.wahr_weiss))
-                zusatz.append(f"Lügenzeile: {li} (wahre Wertung: {wahr})")
+                    lz.art, lz.wahr_schwarz, lz.wahr_weiss), cfg)
+                zusatz.append(T(cfg, "sol_luege", i=li, w=wahr))
             for ki, k in enumerate(teil.ketten, 1):
                 label = f"K{ki}" if len(teil.ketten) > 1 else "K"
-                zusatz.append(f"Zeile {label} aus Teil {k.quelle}: "
-                              f"{code_text(k.tipp, cfg)}")
+                zusatz.append(T(cfg, "sol_kette", label=label,
+                                n=k.quelle, c=code_text(k.tipp, cfg)))
             for txt in zusatz:
                 zeilen_html.append(
                     f'<div class="note">{html_mod.escape(txt)}</div>')
-            kopf = f"Level: {teil.schwierigkeit}"
+            kopf = T(cfg, "kopf_level", lvl=teil.schwierigkeit)
         else:
             for ki, k in enumerate(teil.ketten, 1):
                 label = f"K{ki}" if len(teil.ketten) > 1 else "K"
                 frage = "".join('<span class="peg ghost">?</span>'
                                 for _ in range(cfg.laenge))
-                richtung = " (rückwärts!)" if cfg.kette == "rueckwaerts" else ""
-                fb = html_wertung("sw", (k.schwarz, k.weiss))
+                richtung = (T(cfg, "kette_rueck_html")
+                            if cfg.kette == "rueckwaerts" else "")
+                fb = html_wertung("sw", (k.schwarz, k.weiss), cfg)
+                marke = html_mod.escape(
+                    T(cfg, "kette_html", n=k.quelle, r=richtung))
                 zeilen_html.append(
                     f'<div class="row chain"><span class="idx">{label}</span>'
-                    f'<span class="chainlabel">Code aus Teil '
-                    f'{k.quelle}{richtung}</span>{frage}'
+                    f'<span class="chainlabel">{marke}</span>{frage}'
                     f'<span class="fb">{fb}</span></div>')
             for i, z in enumerate(teil.zeilen, 1):
                 pegs = "".join(html_kreis(x, cfg) for x in z.tipp)
                 zeilen_html.append(
                     f'<div class="row"><span class="idx">{i}</span>{pegs}'
-                    f'<span class="fb">{html_wertung(z.art, z.key)}</span>'
+                    f'<span class="fb">{html_wertung(z.art, z.key, cfg)}</span>'
                     f'</div>')
             kopf = wert_kopf
         karten.append(
-            f'<section class="card"><header><h2>TEIL {teil.nummer}</h2>'
+            f'<section class="card"><header><h2>'
+            f'{T(cfg, "teil", n=teil.nummer)}</h2>'
             f'<span class="fbhead">{kopf}</span></header>'
             + "".join(zeilen_html) + "</section>")
 
@@ -818,16 +1083,17 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
         regeln = "".join(f"<li>{html_mod.escape(r)}</li>"
                          for r in regel_zeilen(cfg))
         if cfg.zeichen == "farben":
-            legende = ('<div class="legende">Farben: ' + " · ".join(
-                f"<b>{s}</b>&nbsp;=&nbsp;{FARBEN[s][0]}"
+            legende = ('<div class="legende">'
+                       + T(cfg, "legende_farben") + " · ".join(
+                f"<b>{s}</b>&nbsp;=&nbsp;{farbname(s, cfg)}"
                 for s in SYMBOLE[:cfg.farben]) + "</div>")
         else:
             legende = (f'<div class="legende">'
                        f'{html_mod.escape(legende_text(cfg))}</div>')
         fuss = f'<div class="rules"><ul>{regeln}</ul></div>{legende}'
     else:
-        fuss = ('<div class="rules">Zu jeder Aufgabe gibt es genau eine '
-                'Lösung — per vollständiger Enumeration geprüft.</div>')
+        fuss = (f'<div class="rules">'
+                f'{html_mod.escape(T(cfg, "sol_fuss"))}</div>')
 
     signatur = (f'<div class="sig">{html_mod.escape(cfg.signatur)}</div>'
                 if cfg.signatur else "")
@@ -1078,36 +1344,39 @@ C_WEISS = (1, 1, 1)
 
 
 def _untertitel(cfg: Konfig, teile, seed: int) -> str:
-    modus_txt = {"standard": "Schwarz/Weiß-Wertung",
-                 "schlampig": "teils nur Treffersumme",
-                 "schwarz": "nur schwarze Stifte"}[cfg.modus]
-    if cfg.zeichen == "wort-de":
-        kopf = f"{cfg.laenge} Buchstaben · echte deutsche Wörter"
-    elif cfg.zeichen == "wort-en":
-        kopf = f"{cfg.laenge} Buchstaben · echte englische Wörter"
+    modus_txt = T(cfg, {"standard": "modus_standard",
+                        "schlampig": "modus_schlampig",
+                        "schwarz": "modus_schwarz"}[cfg.modus])
+    wdh = T(cfg, "wdh_ja" if cfg.wiederholung else "wdh_nein")
+    if ist_wortmodus(cfg.zeichen):
+        kopf = (T(cfg, "buchstaben", n=cfg.laenge) + " · "
+                + T(cfg, "woerter_de" if cfg.zeichen == "wort-de"
+                    else "woerter_en"))
     elif cfg.zeichen == "ziffern":
-        kopf = (f"{cfg.laenge} Stellen · Ziffern 0-{cfg.farben - 1} · "
-                f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}")
+        kopf = (T(cfg, "stellen", n=cfg.laenge) + " · "
+                + T(cfg, "ziffern_bis", n=cfg.farben - 1) + " · " + wdh)
     else:
-        kopf = (f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
-                f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}")
-    unter = (f"{kopf} · max. {cfg.max_schwarz} schwarz / "
-             f"{cfg.max_treffer} Treffer je Zeile · {modus_txt}")
+        kopf = (T(cfg, "stellen", n=cfg.laenge) + " · "
+                + T(cfg, "farben_n", n=cfg.farben) + " · " + wdh)
+    unter = (f"{kopf} · "
+             + T(cfg, "grenzen", s=cfg.max_schwarz, t=cfg.max_treffer)
+             + f" · {modus_txt}")
     if cfg.luegner:
-        unter += " · Lügner-Variante"
+        unter += " · " + T(cfg, "var_luegner")
     if cfg.kette == "rueckwaerts" and cfg.teile > 1:
-        unter += " · Rückwärts-Kette"
+        unter += " · " + T(cfg, "var_rueckwaerts")
     if cfg.gabel and cfg.teile >= 3:
-        unter += " · Gabel-Kette"
+        unter += " · " + T(cfg, "var_gabel")
+    # Höchste erreichte Stufe des Blattes
     schwierig = max((t.schwierigkeit for t in teile),
-                    key=lambda s: ["leicht", "mittel", "schwer"].index(s))
-    return f"{unter} · Level: {schwierig} · Seed {seed}"
+                    key=lambda s: LEVEL.index(s))
+    return unter + " · " + T(cfg, "level_seed", lvl=schwierig, seed=seed)
 
 
-def _wertung_elemente(el, x_rechts, mitte, art, key, punkt_r=3.4):
+def _wertung_elemente(el, x_rechts, mitte, art, key, cfg, punkt_r=3.4):
     """Zeichnet die Schwarz/Weiß-Stifte rechtsbündig; gibt die Breite zurück."""
     if art == "summe":
-        txt = f"{key} Treffer"
+        txt = T(cfg, "badge_treffer", n=key)
         w = text_breite(txt, 7.5, True) + 12
         el.append(el_rect(x_rechts - w, mitte - 6, w, 12, 6, fuell=C_DUNKEL))
         el.append(el_text(x_rechts - w / 2, mitte + 2.7, txt, 7.5,
@@ -1184,7 +1453,8 @@ def _karte(el, x, y, breite, titel, kopf_rechts, zeilen, cfg, peg_d, zeilen_h,
                 el.append(el_text(cx, mitte + peg_d * 0.17, buchstabe,
                                   peg_d * 0.46, rgb(fg), "middle", True))
         if art is not None:
-            _wertung_elemente(el, x + breite - pad - 2, mitte, art, key)
+            _wertung_elemente(el, x + breite - pad - 2, mitte, art, key,
+                              cfg)
         yy += zeilen_h
     return hoehe
 
@@ -1206,8 +1476,7 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
     el = []
     y = rand
 
-    titel = ("MASTERMIND-KETTE" if art == "aufgabe"
-             else "MASTERMIND-KETTE — LÖSUNGEN")
+    titel = T(cfg, "titel" if art == "aufgabe" else "titel_loesung")
     el.append(el_text(breite / 2, y + 16, titel, 19, C_INK, "middle", True))
     y += 24
     for zeile in umbruch(_untertitel(cfg, teile, seed), inhalt_b, 8.2):
@@ -1220,8 +1489,8 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
     karten_b = (inhalt_b - luecke * (spalten - 1)) / spalten
     peg_d = _peg_masse(cfg, karten_b)
     zeilen_h = peg_d + 6
-    wert_kopf = {"standard": "schwarz / weiß", "schlampig": "Wertung",
-                 "schwarz": "schwarz"}[cfg.modus]
+    wert_kopf = T(cfg, {"standard": "kopf_sw", "schlampig": "kopf_wertung",
+                        "schwarz": "kopf_schwarz"}[cfg.modus])
 
     zeilen_y = y
     max_h = 0.0
@@ -1244,31 +1513,33 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
             kopf = wert_kopf
         else:
             zeilen = [("L", teil.code, None, None, "loesung")]
-            kopf = f"Level: {teil.schwierigkeit}"
+            kopf = T(cfg, "kopf_level", lvl=teil.schwierigkeit)
 
         hinweise = []
         if art == "aufgabe":
-            richtung = (" rückwärts" if cfg.kette == "rueckwaerts" else "")
+            richtung = (T(cfg, "rueckwaerts_kurz")
+                        if cfg.kette == "rueckwaerts" else "")
             for ki, k in enumerate(teil.ketten, 1):
                 label = f"K{ki}" if mehrere else "K"
-                hinweise.append(f"Zeile {label}: Lösungscode aus Teil "
-                                f"{k.quelle}{richtung} eintragen")
-        h = _karte(el, x, zeilen_y, karten_b, f"TEIL {teil.nummer}", kopf,
+                hinweise.append(T(cfg, "kette_hinweis", label=label,
+                                  n=k.quelle, r=richtung))
+        h = _karte(el, x, zeilen_y, karten_b,
+                   T(cfg, "teil", n=teil.nummer), kopf,
                    zeilen, cfg, peg_d, zeilen_h, hinweise)
 
         if art == "loesung":
             # Klartext und ggf. Lügenzeile unter die Lösung schreiben.
-            zusatz = [f"Code: {code_text(teil.code, cfg)}"]
+            zusatz = [T(cfg, "sol_code", c=code_text(teil.code, cfg))]
             if cfg.luegner:
                 li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
                 lz = next(z for z in teil.zeilen if z.luege)
-                wahr = wertung_text(lz.art, projektion(lz.art, lz.wahr_schwarz,
-                                                       lz.wahr_weiss))
-                zusatz.append(f"Lügenzeile: {li} (wahr: {wahr})")
+                wahr = wertung_text(lz.art, projektion(lz.art,
+                                    lz.wahr_schwarz, lz.wahr_weiss), cfg)
+                zusatz.append(T(cfg, "sol_luege", i=li, w=wahr))
             for ki, k in enumerate(teil.ketten, 1):
                 label = f"K{ki}" if mehrere else "K"
-                zusatz.append(f"Zeile {label} aus Teil {k.quelle}: "
-                              f"{code_text(k.tipp, cfg)}")
+                zusatz.append(T(cfg, "sol_kette", label=label,
+                                n=k.quelle, c=code_text(k.tipp, cfg)))
             ty = zeilen_y + h + 3
             for txt in zusatz:
                 el_text_stifte(el, x + 9, ty + 7, txt, 7.6, C_GRAU)
@@ -1286,16 +1557,14 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
                 y += 10
         y += 4
         legende = (legende_text(cfg) if cfg.zeichen != "farben"
-                   else "Farben: " + " · ".join(
-                       f"{s} = {FARBEN[s][0]}" for s in SYMBOLE[:cfg.farben]))
+                   else T(cfg, "legende_farben") + " · ".join(
+                       f"{s} = {farbname(s, cfg)}"
+                       for s in SYMBOLE[:cfg.farben]))
         for zeile in umbruch(legende, inhalt_b, 8.0):
             el.append(el_text(rand, y + 7, zeile, 8.0, C_MUTED))
             y += 10
     else:
-        el.append(el_text(rand, y + 7,
-                          "Zu jeder Aufgabe gibt es genau eine Lösung — "
-                          "per vollständiger Enumeration geprüft.",
-                          8.0, C_MUTED))
+        el.append(el_text(rand, y + 7, T(cfg, "sol_fuss"), 8.0, C_MUTED))
         y += 10
 
     if cfg.signatur:
@@ -1683,6 +1952,11 @@ def frage_formate(formate, basis, ordner):
 def interaktiv(cfg: Konfig) -> Konfig:
     print("\nMASTERMIND-KETTE — Generator")
     print("Einfach Enter drücken übernimmt jeweils den Vorschlag in [].\n")
+    print("Sprache der Rätselblätter:  1 = deutsch    2 = englisch")
+    swahl = frage("Sprache", 1 if cfg.sprache == "de" else 2, int,
+                  lambda v: v in (1, 2), "1 oder 2.")
+    cfg.sprache = "de" if swahl == 1 else "en"
+
     cfg.teile = frage("Wie viele verkettete Teile?", cfg.teile, int,
                       lambda v: 1 <= v <= 8, "1 bis 8 Teile.")
 
@@ -1696,6 +1970,19 @@ def interaktiv(cfg: Konfig) -> Konfig:
     cfg.zeichen = {1: "farben", 2: "ziffern",
                    3: "wort-de", 4: "wort-en"}[z]
 
+    print("\nSchwierigkeitsstufe:")
+    print("   1 = easy        2 = medium      3 = hard")
+    print("   4 = veryhard    5 = evil")
+    print("   (setzt passende Vorgaben; jede lässt sich danach überschreiben)")
+    lwahl = frage("Stufe", LEVEL.index(cfg.level) + 1, int,
+                  lambda v: 1 <= v <= 5, "1 bis 5.")
+    cfg.level = LEVEL[lwahl - 1]
+    for feld, wert in level_vorgaben(cfg.level, cfg.zeichen).items():
+        setattr(cfg, feld, wert)
+    if cfg.level in ("evil",) and not ist_wortmodus(cfg.zeichen):
+        print("  Hinweis: 'evil' mit Farben/Ziffern rechnet lange "
+              "(gut eine halbe Minute pro Teil).")
+
     if cfg.zeichen in ("wort-de", "wort-en"):
         print(f"  Verfügbare Wortlängen: {wort_laengen_text(cfg.zeichen)}")
         laengen = wort_laengen(cfg.zeichen)
@@ -1708,8 +1995,7 @@ def interaktiv(cfg: Konfig) -> Konfig:
         was = "Ziffern" if cfg.zeichen == "ziffern" else "Farben"
         cfg.laenge = frage("Codelänge (Stellen)", cfg.laenge, int,
                            lambda v: 3 <= v <= 8, "3 bis 8 Stellen.")
-        if cfg.zeichen == "ziffern" and cfg.farben == 7:
-            cfg.farben = 10   # sinnvoller Vorschlag für Ziffern
+
         cfg.farben = frage(f"Anzahl verschiedener {was}", cfg.farben, int,
                            lambda v: 3 <= v <= len(SYMBOLE),
                            f"3 bis {len(SYMBOLE)}.")
@@ -1778,22 +2064,28 @@ def parse_args(argv):
                    default="farben",
                    help="Zeichensatz: farbige Kugeln, Ziffern 0-9, "
                         "echte deutsche oder englische Wörter")
-    p.add_argument("--laenge", type=int, default=5)
+    p.add_argument("--sprache", choices=SPRACHEN, default="de",
+                   help="Sprache der erzeugten Blätter (die Abfrage bleibt "
+                        "deutsch)")
+    p.add_argument("--level", choices=LEVEL, default="medium",
+                   help="Schwierigkeitsstufe; setzt passende Vorgaben und "
+                        "prüft die erreichte Stufe nach")
+    p.add_argument("--laenge", type=int, default=None)
     p.add_argument("--farben", type=int, default=None,
                    help="Anzahl Farben bzw. Ziffern (Standard: 7 Farben, "
                         "10 Ziffern; im Wort-Modus ohne Wirkung)")
     p.add_argument("--zeilen", type=int, default=5)
-    p.add_argument("--max-schwarz", type=int, default=1)
-    p.add_argument("--max-treffer", type=int, default=2)
+    p.add_argument("--max-schwarz", type=int, default=None)
+    p.add_argument("--max-treffer", type=int, default=None)
     p.add_argument("--ohne-wiederholung", action="store_true")
     p.add_argument("--modus", choices=("standard", "schlampig", "schwarz"),
-                   default="standard")
+                   default=None)
     p.add_argument("--kette", choices=("direkt", "rueckwaerts"),
                    default="direkt")
     p.add_argument("--gabel", action="store_true",
                    help="Gabel-Kette: zwei unabhängige Stränge, der letzte "
                         "Teil braucht die Lösungen beider (ab 3 Teilen)")
-    p.add_argument("--luegner", action="store_true")
+    p.add_argument("--luegner", action="store_true", default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--signatur", default="")
     p.add_argument("--formate", default="html",
@@ -1868,7 +2160,9 @@ def schreibe_dateien(teile, cfg: Konfig, seed: int, formate, basis: str,
     for kuerzel in ("html", "pdf", "png"):
         if kuerzel not in formate:
             continue
-        for art, endung in (("aufgabe", "aufgabe"), ("loesung", "loesung")):
+        for art in ("aufgabe", "loesung"):
+            endung = T(cfg, "datei_aufgabe" if art == "aufgabe"
+                       else "datei_loesung")
             pfad = f"{voll}_{endung}.{kuerzel}"
             name = f"{basis}_{endung}.{kuerzel}"
             if kuerzel == "html":
@@ -1890,18 +2184,39 @@ def schreibe_dateien(teile, cfg: Konfig, seed: int, formate, basis: str,
     return erzeugt
 
 
+def wende_level_an(cfg: Konfig, gesetzt: dict):
+    """Füllt alle Werte, die der Benutzer nicht selbst vorgegeben hat, mit
+    den Vorgaben der gewählten Stufe."""
+    vorgaben = level_vorgaben(cfg.level, cfg.zeichen)
+    for feld, wert in vorgaben.items():
+        if gesetzt.get(feld) is None:
+            setattr(cfg, feld, wert)
+    # Nicht gesetzte Restwerte auf die bisherigen Standards bringen.
+    if gesetzt.get("modus") is None and "modus" not in vorgaben:
+        cfg.modus = "standard"
+    if gesetzt.get("luegner") is None and "luegner" not in vorgaben:
+        cfg.luegner = False
+    if gesetzt.get("farben") is None and "farben" not in vorgaben:
+        cfg.farben = 10 if cfg.zeichen == "ziffern" else 7
+    return cfg
+
+
 def main(argv=None):
     args = parse_args(argv)
-    farben = args.farben
-    if farben is None:
-        farben = 10 if args.zeichen == "ziffern" else 7
-    cfg = Konfig(teile=args.teile, laenge=args.laenge, farben=farben,
-                 zeichen=args.zeichen,
-                 zeilen=args.zeilen, max_schwarz=args.max_schwarz,
-                 max_treffer=args.max_treffer,
+    gesetzt = {"laenge": args.laenge, "farben": args.farben,
+               "max_schwarz": args.max_schwarz,
+               "max_treffer": args.max_treffer, "modus": args.modus,
+               "luegner": args.luegner}
+    cfg = Konfig(teile=args.teile, zeichen=args.zeichen, level=args.level,
+                 sprache=args.sprache,
+                 zeilen=args.zeilen,
                  wiederholung=not args.ohne_wiederholung,
-                 modus=args.modus, kette=args.kette, gabel=args.gabel,
-                 luegner=args.luegner, seed=args.seed, signatur=args.signatur)
+                 kette=args.kette, gabel=args.gabel,
+                 seed=args.seed, signatur=args.signatur)
+    for feld, wert in gesetzt.items():
+        if wert is not None:
+            setattr(cfg, feld, wert)
+    cfg = wende_level_an(cfg, gesetzt)
     formate = {f.strip().lower() for f in args.formate.split(",") if f.strip()}
     if "alle" in formate:
         formate = {"html", "pdf", "png", "json"}
