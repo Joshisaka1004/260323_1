@@ -21,12 +21,17 @@ python3 scripts/mastermind_kette.py --auto --formate pdf,png --basis buch_seite_
 
 # Gabel-Kette: zwei Stränge, Teil 5 braucht die Lösungen beider
 python3 scripts/mastermind_kette.py --auto --teile 5 --gabel
+
+# Wort-Mastermind: alle Zeilen und die Lösung sind echte deutsche Wörter
+python3 scripts/mastermind_kette.py --auto --zeichen wort-de --teile 3
 ```
 
 Die interaktive Abfrage fragt alles Wesentliche ab (Enter übernimmt den
-Vorschlag): Anzahl Teile (1–8), Codelänge, Farbenzahl, Wiederholung ja/nein,
-Zeilen pro Teil, Treffer-Obergrenzen, Wertungsmodus, Kettenrichtung,
-Lügner-Variante, Seed, Signatur und zum Schluss die Ausgabeformate.
+Vorschlag): Anzahl Teile (1–8), Zeichensatz (farbige Kugeln, Ziffern,
+deutsche oder englische Wörter), Codelänge bzw. Wortlänge, Symbolzahl,
+Wiederholung ja/nein, Zeilen pro Teil, Treffer-Obergrenzen, Wertungsmodus,
+Kettenrichtung, Gabel- und Lügner-Variante, Seed, Signatur und zum Schluss
+die Ausgabeformate.
 
 ## Garantien — geprüft, nicht geraten
 
@@ -46,6 +51,34 @@ Enumeration** aller möglichen Codes (bis 2 Mio. Codes, d. h. z. B. 8 Farben ×
 
 Reicht die gewünschte Zeilenzahl für Eindeutigkeit nicht aus (z. B. im
 Nur-Schwarz-Modus), erhöht der Generator sie selbstständig und meldet das.
+
+## Zeichensätze
+
+Der Code kann aus vier Zeichensätzen bestehen (`--zeichen`, interaktiv als
+erste Frage nach der Teilezahl):
+
+| Zeichensatz | Schalter | Beschreibung |
+| --- | --- | --- |
+| Farbige Kugeln | `--zeichen farben` | Klassisch: 3–10 Farben mit Buchstabenkürzel (Standard 7). |
+| Ziffern | `--zeichen ziffern` | Codes aus Ziffern 0–9 (Standard: 10 Ziffern), farbig dargestellt. Die Lösung eignet sich z. B. als Zahlenschloss-Code. |
+| Deutsche Wörter | `--zeichen wort-de` | Lösungscode und **alle Tipp-Zeilen sind echte deutsche Wörter** (Wort-Mastermind wie bei Rätselmeisterschaften). Eingebauter Wortschatz: über 1160 gebräuchliche Wörter (4/5/6 Buchstaben, ohne Umlaute und Eigennamen). |
+| Englische Wörter | `--zeichen wort-en` | Wie oben mit fast 1700 englischen Wörtern. |
+
+Im Wort-Modus ist der Kandidatenraum die Wortliste — Eindeutigkeit,
+Minimalität und Kettenzwang werden über den gesamten Wortschatz bewiesen.
+Weil Wörter viel Struktur tragen, kommen die Teile oft mit 3–4 Hinweiszeilen
+aus (der Generator meldet das). Die Rückwärts-Kette ist im Wort-Modus
+abgeschaltet, weil das gespiegelte Wort kein echtes Wort wäre.
+
+**Wortschatz erweitern:** Die Listen stehen am Ende des Skripts als
+Klartext-Blöcke `WOERTER_DE` und `WOERTER_EN` — einfach eigene Wörter
+(Großbuchstaben, ohne Umlaute/ß) anhängen; Duplikate und Fremdzeichen werden
+beim Laden automatisch aussortiert. Ein ehrlicher Hinweis für den
+Buch-Einsatz: Die Eindeutigkeit gilt bezogen auf den eingebauten Wortschatz.
+Je größer die Liste, desto sicherer ist ausgeschlossen, dass ein findiger
+Löser ein weiteres passendes Wort außerhalb des Vorrats entdeckt — die
+strengen Wertungen mehrerer Zeilen machen das aber ohnehin sehr
+unwahrscheinlich.
 
 ## Eingebaute Varianten
 
@@ -105,5 +138,3 @@ Noch nicht eingebaut, aber mit derselben Engine gut machbar:
 * **Duell-Modus** — zwei Löser bekommen dieselben Zeilen, aber
   komplementäre Wertungshälften (einer nur schwarz, einer nur weiß) und
   müssen kooperieren.
-* **Zahlen-Ausgabe** — Ziffern statt Farben (nur Anzeigeschicht tauschen),
-  dann eignet sich die Lösung z. B. als Zahlenschloss-Code einer Schnitzeljagd.

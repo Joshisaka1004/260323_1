@@ -128,6 +128,7 @@ class Konfig:
     max_treffer: int = 2
     wiederholung: bool = True
     modus: str = "standard"          # standard | schlampig | schwarz
+    zeichen: str = "farben"          # farben | ziffern | wort-de | wort-en
     kette: str = "direkt"            # direkt | rueckwaerts
     gabel: bool = False              # zwei Stränge, die im letzten Teil münden
     luegner: bool = False
@@ -190,7 +191,38 @@ def schwach(s: int, w: int, cfg: Konfig) -> bool:
     return s <= cfg.max_schwarz and s + w <= cfg.max_treffer
 
 
+def lade_zeichensatz(cfg: Konfig):
+    """Bereitet Anzeigetabellen (und für Wort-Modi den Kandidatenraum) vor.
+    Muss nach der Konfiguration und vor der Generierung laufen."""
+    if cfg.zeichen == "farben":
+        cfg._zeichen = list(SYMBOLE[:cfg.farben])
+        cfg._farbtab = {s: (FARBEN[s][1], FARBEN[s][2]) for s in cfg._zeichen}
+        cfg._woerter = None
+    elif cfg.zeichen == "ziffern":
+        cfg._zeichen = list("0123456789")[:cfg.farben]
+        palette = list(FARBEN.values())
+        cfg._farbtab = {z: (palette[i][1], palette[i][2])
+                        for i, z in enumerate(cfg._zeichen)}
+        cfg._woerter = None
+    else:
+        woerter = woerter_liste(cfg.zeichen, cfg.laenge)
+        if len(woerter) < 80:
+            sprache = "deutschen" if cfg.zeichen == "wort-de" else "englischen"
+            sys.exit(f"Für Länge {cfg.laenge} sind nur {len(woerter)} "
+                     f"{sprache} Wörter im Vorrat — bitte eine andere "
+                     f"Wortlänge wählen ({wort_laengen_text(cfg.zeichen)}).")
+        alphabet = sorted({b for w in woerter for b in w})
+        index = {b: i for i, b in enumerate(alphabet)}
+        cfg.farben = len(alphabet)
+        cfg.wiederholung = True   # Buchstaben wiederholen sich, wie im Wort
+        cfg._zeichen = alphabet
+        cfg._farbtab = {b: ("#f2f5f8", "#1d2733") for b in alphabet}
+        cfg._woerter = [tuple(index[b] for b in w) for w in woerter]
+
+
 def alle_codes(cfg: Konfig):
+    if getattr(cfg, "_woerter", None) is not None:
+        return list(cfg._woerter)
     symbole = range(cfg.farben)
     if cfg.wiederholung:
         return list(itertools.product(symbole, repeat=cfg.laenge))
@@ -449,9 +481,10 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
             if zeilen is None:
                 continue
             if not jede_zeile_noetig(zeilen, basis, f):
-                if len(vorgaenger) < 2:
-                    continue
-                # Gabelpunkt: überzählige Zeilen streichen statt verwerfen.
+                if len(vorgaenger) < 2 and len(basis) > 150 * zeilen_n:
+                    continue  # großer Raum: die nächste Auslosung schafft es
+                # Kleiner Suchraum (Wortlisten, Gabelpunkt): überzählige
+                # Zeilen streichen statt den Versuch zu verwerfen.
                 zeilen = entferne_redundante(zeilen, basis, f)
                 if len(zeilen) < 3:
                     continue
@@ -487,6 +520,8 @@ def schaetze_schwierigkeit(teil, basis, cfg) -> str:
     punkte += 3.0 * mager
     if cfg.modus != "standard":
         punkte += 1.5
+    if cfg.zeichen in ("wort-de", "wort-en"):
+        punkte += 3.0  # der Löser kennt den Wortvorrat nicht
     if punkte < 9:
         return "leicht"
     if punkte < 12.5:
@@ -515,7 +550,7 @@ def generiere_puzzle(cfg: Konfig, rng: random.Random):
             codes[n] = teil.code
             zusatz = ""
             if len(teil.zeilen) != zeilen_n:
-                zusatz = (f", Gabelpunkt kommt mit {len(teil.zeilen)} "
+                zusatz = (f", kommt mit {len(teil.zeilen)} "
                           f"normalen Zeilen aus")
             print(f"  Teil {n} erzeugt "
                   f"(Schwierigkeit: {teil.schwierigkeit}{zusatz}) ...",
@@ -577,8 +612,8 @@ def pruefe_puzzle(teile, cfg: Konfig):
 # Ausgabe: Konsole
 # ---------------------------------------------------------------------------
 
-def code_text(code) -> str:
-    return " ".join(SYMBOLE[i] for i in code)
+def code_text(code, cfg: Konfig) -> str:
+    return " ".join(cfg._zeichen[i] for i in code)
 
 
 def wertung_text(art, key) -> str:
@@ -590,6 +625,17 @@ def wertung_text(art, key) -> str:
     return "●" * key if key else "—"
 
 
+def legende_text(cfg: Konfig) -> str:
+    if cfg.zeichen == "farben":
+        return "Farben: " + "  ".join(f"{s}={FARBEN[s][0]}"
+                                      for s in SYMBOLE[:cfg.farben])
+    if cfg.zeichen == "ziffern":
+        return f"Ziffern: 0 bis {cfg.farben - 1}"
+    sprache = "deutsche" if cfg.zeichen == "wort-de" else "englische"
+    return (f"Wortschatz: {len(cfg._woerter)} {sprache} Wörter mit "
+            f"{cfg.laenge} Buchstaben")
+
+
 def drucke_konsole(teile, cfg: Konfig, seed: int):
     b = []
     b.append("=" * 62)
@@ -597,8 +643,7 @@ def drucke_konsole(teile, cfg: Konfig, seed: int):
     b.append((f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
               f"{cfg.zeilen} Zeilen/Teil · Seed {seed}").center(62))
     b.append("=" * 62)
-    farbleiste = "  ".join(f"{s}={FARBEN[s][0]}" for s in SYMBOLE[:cfg.farben])
-    b.append(f"Farben: {farbleiste}")
+    b.append(legende_text(cfg))
     b.append("")
     for teil in teile:
         b.append(f"TEIL {teil.nummer}   (Schwierigkeit: {teil.schwierigkeit})")
@@ -610,7 +655,7 @@ def drucke_konsole(teile, cfg: Konfig, seed: int):
                      f"Teil {k.quelle}   "
                      f"{wertung_text('sw', (k.schwarz, k.weiss))}")
         for i, z in enumerate(teil.zeilen, 1):
-            b.append(f"  {i}  {code_text(z.tipp)}   {wertung_text(z.art, z.key)}")
+            b.append(f"  {i}  {code_text(z.tipp, cfg)}   {wertung_text(z.art, z.key)}")
         b.append("")
     b.append("-" * 62)
     b.append("Regeln:")
@@ -627,7 +672,7 @@ def drucke_konsole(teile, cfg: Konfig, seed: int):
                                 projektion(lz.art, lz.wahr_schwarz,
                                            lz.wahr_weiss))
             extra = f"   (Lügenzeile: {li}, wahre Wertung: {wahr})"
-        b.append(f"  Teil {teil.nummer}: {code_text(teil.code)}{extra}")
+        b.append(f"  Teil {teil.nummer}: {code_text(teil.code, cfg)}{extra}")
     print("\n".join(b))
 
 
@@ -642,10 +687,20 @@ def regel_zeilen(cfg: Konfig):
     elif cfg.modus == "schwarz":
         regeln.append("In diesem Rätsel werden NUR schwarze Stifte gewertet; "
                       "weiße Hinweise gibt es nicht.")
-    if cfg.wiederholung:
-        regeln.append("Farben dürfen sich im Code wiederholen.")
+    if cfg.zeichen in ("wort-de", "wort-en"):
+        sprache = ("deutsches" if cfg.zeichen == "wort-de"
+                   else "englisches")
+        regeln.append(f"Der Lösungscode und jede Tipp-Zeile sind ein echtes, "
+                      f"gebräuchliches {sprache} Wort mit {cfg.laenge} "
+                      f"Buchstaben (keine Eigennamen).")
+        regeln.append("Buchstaben können sich wiederholen, so wie im "
+                      "jeweiligen Wort.")
+    elif cfg.wiederholung:
+        was = "Ziffern" if cfg.zeichen == "ziffern" else "Farben"
+        regeln.append(f"{was} dürfen sich im Code wiederholen.")
     else:
-        regeln.append("Im Code kommt jede Farbe höchstens einmal vor.")
+        was = "Ziffer" if cfg.zeichen == "ziffern" else "Farbe"
+        regeln.append(f"Im Code kommt jede {was} höchstens einmal vor.")
     regeln.append(f"Jede normale Zeile hat höchstens {cfg.max_schwarz} Treffer "
                   f"in richtiger Position und {cfg.max_treffer} Treffer "
                   f"insgesamt.")
@@ -691,9 +746,9 @@ def html_wertung(art, key) -> str:
     return dots or '<span class="none">–</span>'
 
 
-def html_kreis(sym_index: int) -> str:
-    s = SYMBOLE[sym_index]
-    _, bg, fg = FARBEN[s]
+def html_kreis(sym_index: int, cfg: Konfig) -> str:
+    s = cfg._zeichen[sym_index]
+    bg, fg = cfg._farbtab[s]
     return f'<span class="peg" style="background:{bg};color:{fg}">{s}</span>'
 
 
@@ -709,10 +764,10 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
     for teil in teile:
         zeilen_html = []
         if art == "loesung":
-            pegs = "".join(html_kreis(x) for x in teil.code)
+            pegs = "".join(html_kreis(x, cfg) for x in teil.code)
             zeilen_html.append(
                 f'<div class="row"><span class="idx">L</span>{pegs}</div>')
-            zusatz = [f"Code: {code_text(teil.code)}"]
+            zusatz = [f"Code: {code_text(teil.code, cfg)}"]
             if cfg.luegner:
                 li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
                 lz = next(z for z in teil.zeilen if z.luege)
@@ -722,7 +777,7 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
             for ki, k in enumerate(teil.ketten, 1):
                 label = f"K{ki}" if len(teil.ketten) > 1 else "K"
                 zusatz.append(f"Zeile {label} aus Teil {k.quelle}: "
-                              f"{code_text(k.tipp)}")
+                              f"{code_text(k.tipp, cfg)}")
             for txt in zusatz:
                 zeilen_html.append(
                     f'<div class="note">{html_mod.escape(txt)}</div>')
@@ -740,7 +795,7 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
                     f'{k.quelle}{richtung}</span>{frage}'
                     f'<span class="fb">{fb}</span></div>')
             for i, z in enumerate(teil.zeilen, 1):
-                pegs = "".join(html_kreis(x) for x in z.tipp)
+                pegs = "".join(html_kreis(x, cfg) for x in z.tipp)
                 zeilen_html.append(
                     f'<div class="row"><span class="idx">{i}</span>{pegs}'
                     f'<span class="fb">{html_wertung(z.art, z.key)}</span>'
@@ -754,9 +809,13 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
     if art == "aufgabe":
         regeln = "".join(f"<li>{html_mod.escape(r)}</li>"
                          for r in regel_zeilen(cfg))
-        legende = ('<div class="legende">Farben: ' + " · ".join(
-            f"<b>{s}</b>&nbsp;=&nbsp;{FARBEN[s][0]}"
-            for s in SYMBOLE[:cfg.farben]) + "</div>")
+        if cfg.zeichen == "farben":
+            legende = ('<div class="legende">Farben: ' + " · ".join(
+                f"<b>{s}</b>&nbsp;=&nbsp;{FARBEN[s][0]}"
+                for s in SYMBOLE[:cfg.farben]) + "</div>")
+        else:
+            legende = (f'<div class="legende">'
+                       f'{html_mod.escape(legende_text(cfg))}</div>')
         fuss = f'<div class="rules"><ul>{regeln}</ul></div>{legende}'
     else:
         fuss = ('<div class="rules">Zu jeder Aufgabe gibt es genau eine '
@@ -839,7 +898,7 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
 
 def schreibe_json(teile, cfg: Konfig, seed: int, pfad: str):
     def code_str(c):
-        return "".join(SYMBOLE[i] for i in c)
+        return "".join(cfg._zeichen[i] for i in c)
     daten = {
         "konfig": {k: v for k, v in vars(cfg).items()
                    if k not in ("versuche", "stichprobe", "endsuche")},
@@ -1014,10 +1073,18 @@ def _untertitel(cfg: Konfig, teile, seed: int) -> str:
     modus_txt = {"standard": "Schwarz/Weiß-Wertung",
                  "schlampig": "teils nur Treffersumme",
                  "schwarz": "nur schwarze Stifte"}[cfg.modus]
-    unter = (f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
-             f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}"
-             f" · max. {cfg.max_schwarz} schwarz / {cfg.max_treffer} Treffer "
-             f"je Zeile · {modus_txt}")
+    if cfg.zeichen == "wort-de":
+        kopf = f"{cfg.laenge} Buchstaben · echte deutsche Wörter"
+    elif cfg.zeichen == "wort-en":
+        kopf = f"{cfg.laenge} Buchstaben · echte englische Wörter"
+    elif cfg.zeichen == "ziffern":
+        kopf = (f"{cfg.laenge} Stellen · Ziffern 0-{cfg.farben - 1} · "
+                f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}")
+    else:
+        kopf = (f"{cfg.laenge} Stellen · {cfg.farben} Farben · "
+                f"{'Wiederholungen erlaubt' if cfg.wiederholung else 'ohne Wiederholung'}")
+    unter = (f"{kopf} · max. {cfg.max_schwarz} schwarz / "
+             f"{cfg.max_treffer} Treffer je Zeile · {modus_txt}")
     if cfg.luegner:
         unter += " · Lügner-Variante"
     if cfg.kette == "rueckwaerts" and cfg.teile > 1:
@@ -1102,8 +1169,8 @@ def _karte(el, x, y, breite, titel, kopf_rechts, zeilen, cfg, peg_d, zeilen_h,
         else:
             for j, sym in enumerate(pegs):
                 cx = peg_x0 + j * (peg_d + peg_gap) + peg_d / 2
-                buchstabe = SYMBOLE[sym]
-                _, bg, fg = FARBEN[buchstabe]
+                buchstabe = cfg._zeichen[sym]
+                bg, fg = cfg._farbtab[buchstabe]
                 el.append(el_kreis(cx, mitte, peg_d / 2, fuell=rgb(bg),
                                    rand=C_DUNKEL, breite=1.6))
                 el.append(el_text(cx, mitte + peg_d * 0.17, buchstabe,
@@ -1183,7 +1250,7 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
 
         if art == "loesung":
             # Klartext und ggf. Lügenzeile unter die Lösung schreiben.
-            zusatz = [f"Code: {code_text(teil.code)}"]
+            zusatz = [f"Code: {code_text(teil.code, cfg)}"]
             if cfg.luegner:
                 li = next(i for i, z in enumerate(teil.zeilen, 1) if z.luege)
                 lz = next(z for z in teil.zeilen if z.luege)
@@ -1193,7 +1260,7 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
             for ki, k in enumerate(teil.ketten, 1):
                 label = f"K{ki}" if mehrere else "K"
                 zusatz.append(f"Zeile {label} aus Teil {k.quelle}: "
-                              f"{code_text(k.tipp)}")
+                              f"{code_text(k.tipp, cfg)}")
             ty = zeilen_y + h + 3
             for txt in zusatz:
                 el_text_stifte(el, x + 9, ty + 7, txt, 7.6, C_GRAU)
@@ -1210,8 +1277,9 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
                 el_text_stifte(el, rand + 10, y + 7, zeile, 8.0, C_GRAU)
                 y += 10
         y += 4
-        legende = "Farben: " + " · ".join(
-            f"{s} = {FARBEN[s][0]}" for s in SYMBOLE[:cfg.farben])
+        legende = (legende_text(cfg) if cfg.zeichen != "farben"
+                   else "Farben: " + " · ".join(
+                       f"{s} = {FARBEN[s][0]}" for s in SYMBOLE[:cfg.farben]))
         for zeile in umbruch(legende, inhalt_b, 8.0):
             el.append(el_text(rand, y + 7, zeile, 8.0, C_MUTED))
             y += 10
@@ -1604,24 +1672,47 @@ def interaktiv(cfg: Konfig) -> Konfig:
     print("Einfach Enter drücken übernimmt jeweils den Vorschlag in [].\n")
     cfg.teile = frage("Wie viele verkettete Teile?", cfg.teile, int,
                       lambda v: 1 <= v <= 8, "1 bis 8 Teile.")
-    cfg.laenge = frage("Codelänge (Stellen)", cfg.laenge, int,
-                       lambda v: 3 <= v <= 8, "3 bis 8 Stellen.")
-    cfg.farben = frage("Anzahl Farben/Symbole", cfg.farben, int,
-                       lambda v: 3 <= v <= len(SYMBOLE),
-                       f"3 bis {len(SYMBOLE)} Farben.")
-    cfg.wiederholung = frage_janein("Dürfen sich Farben im Code wiederholen?",
-                                    cfg.wiederholung)
-    if not cfg.wiederholung and cfg.farben < cfg.laenge:
-        print(f"  Ohne Wiederholung braucht es mindestens {cfg.laenge} "
-              f"Farben — setze Farben auf {cfg.laenge}.")
-        cfg.farben = cfg.laenge
-    raum = (cfg.farben ** cfg.laenge if cfg.wiederholung
-            else math.perm(cfg.farben, cfg.laenge))
-    if raum > MAX_RAUM:
-        print(f"  Achtung: {raum:,} mögliche Codes sind zu viele für die "
-              f"Eindeutigkeitsprüfung (max. {MAX_RAUM:,}). Bitte Länge oder "
-              f"Farbenzahl verringern.")
-        return interaktiv(cfg)
+
+    print("\nZeichensatz:  1 = farbige Kugeln")
+    print("              2 = Ziffern (0-9)")
+    print("              3 = echte deutsche Wörter")
+    print("              4 = echte englische Wörter")
+    zwahl = {"farben": 1, "ziffern": 2, "wort-de": 3, "wort-en": 4}
+    z = frage("Zeichensatz", zwahl[cfg.zeichen], int,
+              lambda v: v in (1, 2, 3, 4), "1, 2, 3 oder 4.")
+    cfg.zeichen = {1: "farben", 2: "ziffern",
+                   3: "wort-de", 4: "wort-en"}[z]
+
+    if cfg.zeichen in ("wort-de", "wort-en"):
+        print(f"  Verfügbare Wortlängen: {wort_laengen_text(cfg.zeichen)}")
+        laengen = wort_laengen(cfg.zeichen)
+        vorschlag = cfg.laenge if laengen.get(cfg.laenge, 0) >= 80 else \
+            max(laengen, key=laengen.get)
+        cfg.laenge = frage("Wortlänge", vorschlag, int,
+                           lambda v: laengen.get(v, 0) >= 80,
+                           "Für diese Länge sind zu wenige Wörter im Vorrat.")
+    else:
+        was = "Ziffern" if cfg.zeichen == "ziffern" else "Farben"
+        cfg.laenge = frage("Codelänge (Stellen)", cfg.laenge, int,
+                           lambda v: 3 <= v <= 8, "3 bis 8 Stellen.")
+        if cfg.zeichen == "ziffern" and cfg.farben == 7:
+            cfg.farben = 10   # sinnvoller Vorschlag für Ziffern
+        cfg.farben = frage(f"Anzahl verschiedener {was}", cfg.farben, int,
+                           lambda v: 3 <= v <= len(SYMBOLE),
+                           f"3 bis {len(SYMBOLE)}.")
+        cfg.wiederholung = frage_janein(
+            f"Dürfen sich {was} im Code wiederholen?", cfg.wiederholung)
+        if not cfg.wiederholung and cfg.farben < cfg.laenge:
+            print(f"  Ohne Wiederholung braucht es mindestens {cfg.laenge} "
+                  f"{was} — setze die Anzahl auf {cfg.laenge}.")
+            cfg.farben = cfg.laenge
+        raum = (cfg.farben ** cfg.laenge if cfg.wiederholung
+                else math.perm(cfg.farben, cfg.laenge))
+        if raum > MAX_RAUM:
+            print(f"  Achtung: {raum:,} mögliche Codes sind zu viele für die "
+                  f"Eindeutigkeitsprüfung (max. {MAX_RAUM:,}). Bitte Länge "
+                  f"oder Symbolzahl verringern.")
+            return interaktiv(cfg)
     cfg.zeilen = frage("Hinweiszeilen pro Teil (wird bei Bedarf automatisch "
                        "erhöht)", cfg.zeilen, int,
                        lambda v: 3 <= v <= 20, "3 bis 20 Zeilen.")
@@ -1639,7 +1730,7 @@ def interaktiv(cfg: Konfig) -> Konfig:
     m = frage("Modus", {"standard": 1, "schlampig": 2, "schwarz": 3}[cfg.modus],
               int, lambda v: v in (1, 2, 3), "1, 2 oder 3.")
     cfg.modus = {1: "standard", 2: "schlampig", 3: "schwarz"}[m]
-    if cfg.teile > 1:
+    if cfg.teile > 1 and cfg.zeichen not in ("wort-de", "wort-en"):
         cfg.kette = ("rueckwaerts" if frage_janein(
             "Kette rückwärts übertragen (Zusatz-Dreh)?",
             cfg.kette == "rueckwaerts") else "direkt")
@@ -1669,8 +1760,15 @@ def parse_args(argv):
     p.add_argument("--auto", action="store_true",
                    help="keine interaktive Abfrage, nur Flag-Werte verwenden")
     p.add_argument("--teile", type=int, default=4)
+    p.add_argument("--zeichen", choices=("farben", "ziffern",
+                                         "wort-de", "wort-en"),
+                   default="farben",
+                   help="Zeichensatz: farbige Kugeln, Ziffern 0-9, "
+                        "echte deutsche oder englische Wörter")
     p.add_argument("--laenge", type=int, default=5)
-    p.add_argument("--farben", type=int, default=7)
+    p.add_argument("--farben", type=int, default=None,
+                   help="Anzahl Farben bzw. Ziffern (Standard: 7 Farben, "
+                        "10 Ziffern; im Wort-Modus ohne Wirkung)")
     p.add_argument("--zeilen", type=int, default=5)
     p.add_argument("--max-schwarz", type=int, default=1)
     p.add_argument("--max-treffer", type=int, default=2)
@@ -1727,7 +1825,11 @@ def schreibe_dateien(teile, cfg: Konfig, seed: int, formate, basis: str,
 
 def main(argv=None):
     args = parse_args(argv)
-    cfg = Konfig(teile=args.teile, laenge=args.laenge, farben=args.farben,
+    farben = args.farben
+    if farben is None:
+        farben = 10 if args.zeichen == "ziffern" else 7
+    cfg = Konfig(teile=args.teile, laenge=args.laenge, farben=farben,
+                 zeichen=args.zeichen,
                  zeilen=args.zeilen, max_schwarz=args.max_schwarz,
                  max_treffer=args.max_treffer,
                  wiederholung=not args.ohne_wiederholung,
@@ -1744,22 +1846,34 @@ def main(argv=None):
     if unbekannt:
         sys.exit(f"Unbekanntes Format: {', '.join(sorted(unbekannt))}")
 
-    if not cfg.wiederholung and cfg.farben < cfg.laenge:
-        sys.exit("Ohne Wiederholung braucht es mindestens so viele Farben "
+    if (cfg.zeichen not in ("wort-de", "wort-en")
+            and not cfg.wiederholung and cfg.farben < cfg.laenge):
+        sys.exit("Ohne Wiederholung braucht es mindestens so viele Symbole "
                  "wie Stellen.")
     if cfg.gabel and cfg.teile < 3:
         sys.exit("Die Gabel-Kette braucht mindestens 3 Teile "
                  "(zwei Stränge plus Gabelpunkt).")
-    raum = (cfg.farben ** cfg.laenge if cfg.wiederholung
-            else math.perm(cfg.farben, cfg.laenge))
-    if raum > MAX_RAUM:
-        sys.exit(f"{raum:,} mögliche Codes sind zu viele für die "
-                 f"Eindeutigkeitsprüfung (max. {MAX_RAUM:,}). Bitte Länge "
-                 f"oder Farbenzahl verringern.")
+    if cfg.kette == "rueckwaerts" and cfg.zeichen in ("wort-de", "wort-en"):
+        print("Hinweis: Die Rückwärts-Kette ist im Wort-Modus abgeschaltet — "
+              "das gespiegelte Wort wäre kein echtes Wort.", file=sys.stderr)
+        cfg.kette = "direkt"
+    if cfg.zeichen in ("wort-de", "wort-en"):
+        lade_zeichensatz(cfg)   # lädt die Wortliste, setzt Alphabet
+        raum = len(cfg._woerter)
+        einheit = "Wörter"
+    else:
+        raum = (cfg.farben ** cfg.laenge if cfg.wiederholung
+                else math.perm(cfg.farben, cfg.laenge))
+        if raum > MAX_RAUM:
+            sys.exit(f"{raum:,} mögliche Codes sind zu viele für die "
+                     f"Eindeutigkeitsprüfung (max. {MAX_RAUM:,}). Bitte "
+                     f"Länge oder Symbolzahl verringern.")
+        lade_zeichensatz(cfg)
+        einheit = "Codes"
 
     seed = cfg.seed if cfg.seed is not None else random.randrange(2 ** 32)
     rng = random.Random(seed)
-    print(f"\nErzeuge {cfg.teile} Teil(e) — Suchraum {raum:,} Codes, "
+    print(f"\nErzeuge {cfg.teile} Teil(e) — Suchraum {raum:,} {einheit}, "
           f"Seed {seed} ...", file=sys.stderr)
     teile = generiere_puzzle(cfg, rng)
 
@@ -1774,6 +1888,282 @@ def main(argv=None):
         print("\nGeschriebene Dateien:")
         for name in erzeugt:
             print(f"  {name}")
+
+
+# ---------------------------------------------------------------------------
+# Wortschatz für die Wort-Modi
+# ---------------------------------------------------------------------------
+# Nur Großbuchstaben A-Z, ohne Umlaute/ß, gebräuchliche Wörter (Substantive,
+# Verben, Adjektive, Zahl- und Funktionswörter). Einfach erweiterbar: Wörter
+# mit Leerzeichen oder Zeilenumbruch getrennt anhängen — Duplikate und
+# Fremdzeichen werden beim Laden automatisch aussortiert.
+
+def woerter_liste(zeichenmodus: str, laenge: int):
+    roh = WOERTER_DE if zeichenmodus == "wort-de" else WOERTER_EN
+    return sorted({w for w in roh.upper().split()
+                   if w.isascii() and w.isalpha() and len(w) == laenge})
+
+
+def wort_laengen(zeichenmodus: str) -> dict:
+    roh = WOERTER_DE if zeichenmodus == "wort-de" else WOERTER_EN
+    woerter = {w for w in roh.upper().split() if w.isascii() and w.isalpha()}
+    laengen = {}
+    for w in woerter:
+        laengen[len(w)] = laengen.get(len(w), 0) + 1
+    return laengen
+
+
+def wort_laengen_text(zeichenmodus: str) -> str:
+    laengen = wort_laengen(zeichenmodus)
+    return ", ".join(f"{l} Buchstaben: {n} Wörter"
+                     for l, n in sorted(laengen.items()) if n >= 80)
+
+
+WOERTER_DE = """
+ABEND ABGABE ABGAS ABHANG ABLAUF ABTEIL ABWEHR ACHT ACKER ADEL ADLER AFFE
+AHORN AKTE ALTAR AMBOSS AMEISE AMPEL AMSEL ANBAU ANFANG ANGEL ANGST ANKER
+ANLAGE ANMUT ANRUF ANZUG APFEL ARBEIT ARENA AROMA ARZT ASCHE ATEM ATLAS
+AUFZUG AUGE AUGUST AULA AUTO BACKEN BADEN BAGGER BALKON BALL BANANE BAND
+BANK BART BAUCH BAUEN BAUER BAUM BECHER BEDARF BEERE BEET BEFEHL BEGINN
+BEIGE BEIL BEIN BELEG BEQUEM BERG BERUF BESEN BESITZ BESUCH BETEN BETRAG
+BETT BEUTE BEUTEL BEWEIS BEZIRK BIBER BIEGEN BIENE BIER BILANZ BILD BINDEN
+BIRKE BIRNE BISSEN BITTE BITTEN BITTER BLASE BLASEN BLASS BLATT BLAU BLECH
+BLEI BLICK BLIND BLITZ BLOCK BLUME BLUSE BLUT BOCK BODEN BOGEN BOHNE BOHREN
+BOJE BOMBE BONBON BOOT BORKE BOTE BOXER BRAND BRATEN BRAUN BRAUT BREIT
+BREMSE BRETT BRIEF BRILLE BRISE BROT BRUST BUCH BUCHE BUCHEN BUCHT BUDE
+BULLE BUNT BURG BUSCH BUTTER CHOR CLUB DACH DACHS DAME DAMPF DANK DASEIN
+DATTEL DATUM DAUER DAUMEN DECKE DECKEL DEGEN DEICH DEMUT DENKEN DERB DEUTEN
+DIALOG DICHT DICK DIEB DIENEN DIENST DIESEL DING DISTEL DOCHT DOMINO DONNER
+DOOF DORF DORN DOSE DOTTER DRACHE DRAHT DREI DRUCK DUELL DUFT DUMM DUNKEL
+DURST EBBE EBENE ECHT ECKE EDEL EGAL EHRE EHREN EIER EIFER EIGEN EILEN EIMER
+EINBAU EINS EISEN ELCH ELFE ENDE ENGE ENGEL ENKEL ENTE ERBE ERBSE ERDE
+ERFOLG ERNTE ESEL ESSEN ETAGE EULE FABEL FACKEL FADE FADEN FAHNE FAHREN
+FAHRT FAIR FAKTOR FALKE FALL FALLEN FALTE FALTER FANGEN FARBE FARN FASAN
+FASS FAUL FAUST FEDER FEHLER FEIER FEIERN FEIGE FEILE FEIN FEIND FELD FELGE
+FELL FELSEN FERIEN FERN FERSE FEST FETT FEUCHT FEUER FICHTE FIEBER FILM
+FILTER FINDEN FINGER FIRMA FISCH FLACH FLANKE FLAUM FLECK FLEHEN FLIEGE
+FLIESE FLINK FLIRT FLOCKE FLOSSE FLOTT FLOTTE FLUCHT FLUG FLUR FLUSS FOLGE
+FOLTER FORM FORMEL FORST FOTO FRACHT FRACK FRAGE FRAGEN FRECH FREI FREMD
+FREUDE FREUEN FREUND FRIEDE FRIST FRISUR FROH FROSCH FROST FRUCHT FUCHS
+FURCHE FUTTER GABE GABEL GALGEN GALOPP GANS GARANT GARN GARTEN GASSE GAST
+GATTE GAUMEN GEBEN GEBET GEBIET GEBURT GEDULD GEFAHR GEGEND GEHALT GEHEIM
+GEHEN GEHIRN GEHWEG GEIER GEIGE GEIST GELB GELD GELENK GEMUT GENAU GENUSS
+GERADE GERN GERNE GERUCH GESANG GESETZ GESTE GESUND GEWALT GEWEBE
+GEWINN GIER GIFT GIPFEL GITTER GLANZ GLAS GLATT GLAUBE GLEIS GLIED GLOCKE
+GLUT GNADE GOLD GOLDEN GOLF GONDEL GRAB GRAD GRANIT GRAS GRAU GRENZE GRIFF
+GRILLE GROB GRUBE HAAR HAFEN HAFER HAGEL HAHN HAKEN HALB HALLE HALS HAMMER
+HAND HANDEL HANDY HANG HANTEL HARFE HARKE HART HASE HAUBE HAUFEN HAUS HAUT
+HEBEL HECKE HEER HEIDE HEIL HEIRAT HEITER HEKTIK HELD HELFEN HELL HELM HEMD
+HENNE HERBST HERD HERDE HERZ HEUTE HEXE HILFE HIMMEL HIRN HIRSE HIRT HITZE
+HOBEL HOCH HOFFEN HOLEN HONIG HOSE HOTEL HUHN HUMMEL HUMMER HUMOR HUND HUPE
+HUPEN IDEE IGEL IMKER IMPFEN INHALT INSEKT INSEL IRRTUM JACKE JAGD JAGEN
+JAGUAR JAHR JAZZ JEEP JODELN JOGGEN JUBEL JUNG JUWEL KABEL KAHL KAJAK KAKAO
+KAKTUS KALB KALT KAMEL KAMERA KAMIN KAMM KAMPF KANAL KANONE KANTE KANU
+KARIES KARO KARTE KASSE KASTEN KATZE KAUF KAUFEN KEGEL KEHLE KEIM KEIMEN
+KEKS KELLE KELLER KENNEN KERBE KERL KERN KERZE KESSEL KETTE KIEFER KIESEL
+KILO KIND KINN KINO KISSEN KISTE KITTEL KLADDE KLAGEN KLAPPE KLAR KLAUE
+KLEBEN KLEID KLIMA KLINGE KLINKE KLIPPE KLUG KNABE KNALL KNAPP KNAUF KNECHT
+KNETE KNIE KNIRPS KNOLLE KNOPF KNOSPE KNOTEN KOBOLD KOBRA KOCH KOCHEN KOFFER
+KOHL KOHLE KOJE KOMET KOMMEN KONTUR KOPF KORB KORKEN KORN KRABBE KRACH KRAFT
+KRAGEN KRAN KRANZ KRATER KRAUT KREIDE KREIS KREUZ KRIPPE KROKUS KRONE KRUSTE
+KUCHEN KUGEL KUMPEL KUNDE KUNST KUPFER KURBEL KURS KURZ KUSS LACHE LACHEN
+LACHS LACK LADEN LAGER LAGUNE LAHM LAKEN LAMM LAMPE LAND LANDEN LANG LANZE
+LAUB LAUERN LAUF LAUFEN LAUNE LAUT LAWINE LEBEN LECKER LEDER LEER LEGEN
+LEHNE LEHRE LEHRER LEIB LEID LEIM LEINEN LEISE LEISTE LEITER LERCHE LERNEN
+LESEN LICHT LIEB LIEBEN LIED LIEGE LIEGEN LILA LINDE LINIE LINSE LIST LISTE
+LOBEN LOCH LOCKEN LODERN LOHN LOTSE LUFT LUKE LUNGE LUPE LUPINE LUSTIG MACHT
+MAGEN MAGNET MAHL MAIS MAKLER MALEN MALER MALVE MALZ MAMMUT MANDEL MANEGE
+MANGO MANIER MANTEL MARK MARKT MARONE MARSCH MASCHE MASSE MAST MAUER MAUL
+MAUS MEER MEHL MEHR MEISE MELDEN MELONE MENGE MERKEN MESSE MESSEN MESSER
+METALL METER MIENE MILCH MILD MINUTE MISTEL MITTAG MITTE MITTEL MODELL
+MODERN MOLKE MOND MONTAG MOOR MOOS MORAST MORGEN MOSAIK MOST MOTOR MULDE
+MUMIE MUND MUNTER MURMEL MUSIK MUSKEL MUSTER MUTIG MUTTER NACHT NADEL NAGEL
+NAGEN NARBE NASE NATTER NEBEL NEFFE NEHMEN NEID NEKTAR NELKE NERZ NESSEL
+NEST NETT NETZ NEUN NIERE NIESEN NISCHE NOBEL NORD NORDEN NOTE NUANCE NUDEL
+NULL OBHUT OBLATE OBST OCHSE OFEN OFFEN OHNE OLIVE ONKEL OPER OPFER ORANGE
+ORDEN ORDNER ORGEL ORKAN OSTERN OTTER OVAL PAAR PACK PACKEN PADDEL PAGODE
+PALAST PALME PANDA PANNE PAPIER PAPST PARADE PARK PASSEN PASTA PAUKE PAUSE
+PECH PEDAL PELZ PENDEL PENSUM PERLE PFAD PFANNE PFAU PFEIFE PFEIL PFERD
+PFLUG PFOTE PIANO PICKEL PILGER PILOT PILZ PINSEL PIRAT PIZZA PLAKAT PLAN
+PLANEN PLANET PLANKE PLATZ POKAL PORTAL POST PRACHT PRANKE PRINZ PRISE PROBE
+PUDEL PULT PUMA PUNKT PUPPE PUTE PUTZEN QUALLE QUARK QUELLE QUITTE RABE
+RACHEN RADIO RAHMEN RAKETE RAMPE RAND RANZEN RASSEL RAST RATEN RATTE RAUB
+RAUM RAUPE RECHT REDE REDEN REGAL REGEN REGENT REIF REIHER REIM REIS REISE
+REISEN REKORD RENNEN REPTIL REVIER RIEGEL RIEMEN RIESE RILLE RIND RING
+RINGEN RINNE RITTER RITZE RITZEL ROBBE ROBE ROCK ROLLER ROMAN ROSA ROSE
+ROSINE ROST RUDEL RUDER RUDERN RUFEN RUHE RUHM RUINE RUND RUNDE RUNZEL SAAL
+SAAT SACK SAFT SAGEN SALAMI SALAT SALBE SALZ SAMEN SAMT SAND SARG SATT
+SATTEL SATZ SAUBER SAUER SAUNA SCHAF SCHAL SCHELM SCHERE SCHIFF SCHILD
+SCHLAF SCHNEE SCHNUR SCHULE SCHWAN SEGEL SEGELN SEGLER SEHEN SEHNE SEIDE
+SEIFE SEIL SEITE SEKT SEMMEL SENF SENKEL SESSEL SICHEL SICHER SICHT SIEB
+SIEG SIEGEL SIGNAL SILBER SINGEN SINKEN SIRUP SITZ SITZEN SOCKE SOCKEL SOFA
+SOHN SOLDAT SOMMER SONNE SPANGE SPATZ SPECK SPEISE SPIEL SPINNE SPITZ SPORT
+SPUR STADT STAHL STAMM STAND STANGE STANZE STAPEL STAR STARK STATUE STAU
+STAUB STEHEN STEIL STEIN STELZE STEPPE STERN STEUER STIEL STIER STIL STILL
+STIRN STOFF STOLZ STRAHL STROM STUFE STUHL STUR STURM SUCHEN SULTAN SUMPF
+SUPPE SZENE TADEL TAFEL TAKT TALENT TANNE TANTE TANZ TANZEN TAPETE TAPFER
+TARNEN TASCHE TASSE TASTE TAUBE TAUFE TEER TEICH TEIG TEIL TEILEN TELLER
+TEMPEL TEMPO TENOR TEST THEMA TIEF TIER TIGER TINTE TISCH TITEL TOBEN TOLL
+TOMATE TONNE TOPF TORF TORTE TRAGEN TRAUBE TRAUFE TRAUM TRETEN TREU TREUE
+TRICK TRITT TRUHE TUCH TUGEND TULPE TUMULT TUNNEL TURM TURNEN UFER UMHANG
+UMLAUF UMWEG UNFUG UNRUHE URTEIL VASE VENTIL VERLAG VERS VETTER VIEH VIER
+VOGEL VOLK VOLL VULKAN WAAGE WACH WACHE WAFFEL WAGEN WAGGON WAHL WAHR WALD
+WALZER WAND WANGE WANNE WAPPEN WARE WARM WARTEN WEBEN WEIDE WEIHER WEIN
+WEINEN WEISE WEIT WEIZEN WELLE WELT WENDEN WERDEN WERFEN WERK WERT WESPE
+WEST WESTE WETTE WETTER WIDDER WIEGEN WIESE WILD WIMPEL WIMPER WIND WINDEL
+WINKEL WINKEN WINTER WIRBEL WITZ WOCHE WOHL WOHNEN WOLF WOLKE WOLLE WONNE
+WORT WUCHT WUND WUNDER WURM WURST WURZEL ZACKE ZAHL ZAHLEN ZAHN ZANGE ZAPFEN
+ZART ZAUBER ZAUN ZEBRA ZEDER ZEIGEN ZEILE ZEIT ZELLE ZELT ZEMENT ZEPTER
+ZIEGE ZIEHEN ZIEL ZIELEN ZIFFER ZIMMER ZINK ZINS ZIRKEL ZIRKUS ZITAT ZITHER
+ZOLL ZOPF ZORN ZUCKER ZUFALL ZUGABE ZUNGE ZWECK ZWEI ZWERG ZWIRN
+"""
+
+WOERTER_EN = """
+ABLE ACID AREA ARMY BABY BACK BALL BAND BANK BASE BATH BEAR BEAT BEEN BEER
+BELL BELT BEST BIRD BLOW BLUE BOAT BODY BONE BOOK BORN BOTH BOWL BURN BUSY
+CAKE CALL CALM CAME CAMP CARD CARE CASE CASH CAST CAVE CELL CHAT CHIP CITY
+CLAY CLUB COAL COAT CODE COLD COME COOK COOL COPY CORE CORN COST CREW DARK
+DATA DATE DAWN DEAD DEAL DEAR DEBT DEEP DENY DESK DIAL DIET DIRT DISH DOOR
+DOSE DOWN DRAW DREW DROP DRUM DUCK DUST DUTY EACH EARN EASE EAST EASY EDGE
+ELSE EVEN EVER EXIT FACE FACT FAIL FAIR FALL FARM FAST FATE FEAR FEED FEEL
+FEET FELL FELT FILE FILL FILM FIND FINE FIRE FIRM FISH FIVE FLAG FLAT FLOW
+FOLD FOOD FOOT FORK FORM FORT FOUR FREE FROG FROM FUEL FULL FUND GAIN GAME
+GATE GAVE GIFT GIRL GIVE GLAD GOAL GOAT GOES GOLD GOLF GONE GOOD GRAB GRAY
+GREW GRID GRIP GROW HAIR HALF HALL HAND HANG HARD HARM HATE HAVE HEAD HEAR
+HEAT HELD HELP HERE HERO HIGH HILL HINT HIRE HOLD HOLE HOME HOPE HORN HOST
+HOUR HUGE HUNT HURT IDEA INCH INTO IRON ITEM JOIN JOKE JUMP JURY JUST KEEN
+KEEP KICK KIND KING KNEE KNEW KNOW LACK LADY LAID LAKE LAMP LAND LANE LAST
+LATE LEAD LEAF LEAN LEFT LESS LIFE LIFT LIKE LINE LINK LION LIST LIVE LOAD
+LOAN LOCK LONG LOOK LORD LOSE LOSS LOST LOUD LOVE LUCK MADE MAIL MAIN MAKE
+MALE MANY MARK MASK MASS MATE MEAL MEAN MEAT MEET MENU MERE MILD MILE MILK
+MIND MINE MISS MODE MOOD MOON MORE MOST MOVE MUCH MUST NAME NAVY NEAR NECK
+NEED NEWS NEXT NICE NINE NONE NOON NOSE NOTE OKAY ONCE ONLY OPEN ORAL OVEN
+OVER PACE PACK PAGE PAID PAIN PAIR PALE PALM PARK PART PASS PAST PATH PEAK
+PICK PILE PINE PINK PIPE PLAN PLAY PLOT PLUS POEM POET POLL POND POOL POOR
+PORT POSE POST POUR PRAY PULL PURE PUSH RACE RAIL RAIN RANK RARE RATE READ
+REAL REAR RELY RENT REST RICE RICH RIDE RING RISE RISK ROAD ROCK ROLE ROLL
+ROOF ROOM ROOT ROPE ROSE RULE RUSH SAFE SAID SAIL SALE SALT SAME SAND SAVE
+SEAT SEED SEEK SEEM SEEN SELF SELL SEND SENT SHIP SHOE SHOP SHOT SHOW SHUT
+SICK SIDE SIGN SILK SING SITE SIZE SKIN SLIP SLOW SNOW SOAP SOFT SOIL SOLD
+SOLE SOME SONG SOON SORT SOUL SOUP SPIN SPOT STAR STAY STEP STOP SUCH SUIT
+SURE SWIM TAIL TAKE TALE TALK TALL TANK TAPE TASK TEAM TELL TEND TENT TERM
+TEST TEXT THAN THAT THEM THEN THEY THIN THIS THUS TIDE TIED TIME TINY TOLD
+TONE TOOK TOOL TOUR TOWN TREE TRIP TRUE TUNE TURN TWIN TYPE UNIT UPON USED
+USER VARY VAST VERY VIEW VOTE WAGE WAIT WAKE WALK WALL WANT WARM WASH WAVE
+WEAK WEAR WEEK WELL WENT WERE WEST WHAT WHEN WIDE WIFE WILD WILL WIND WINE
+WING WISE WISH WITH WOLF WOOD WOOL WORD WORE WORK WRAP YARD YEAR YOUR ZERO
+ZONE
+ABOUT ABOVE ACTOR ADMIT ADOPT ADULT AFTER AGAIN AGENT AGREE AHEAD ALARM
+ALBUM ALERT ALIKE ALIVE ALLOW ALONE ALONG ALTER ANGEL ANGER ANGLE ANGRY
+ANKLE APART APPLE APPLY ARENA ARGUE ARISE ARRAY ASIDE ASSET AVOID AWAKE
+AWARD AWARE BADGE BADLY BAKER BASIC BASIS BEACH BEGAN BEGIN BEING BELOW
+BENCH BERRY BIRTH BLACK BLADE BLAME BLANK BLAST BLEND BLESS BLIND BLOCK
+BLOOD BLOOM BOARD BOAST BONUS BOOST BOOTH BOUND BRAIN BRAND BRASS BRAVE
+BREAD BREAK BREED BRICK BRIDE BRIEF BRING BROAD BROKE BROWN BRUSH BUILD
+BUNCH BURST BUYER CABIN CABLE CANDY CARGO CARRY CATCH CAUSE CHAIN CHAIR
+CHALK CHARM CHART CHASE CHEAP CHECK CHEEK CHEER CHESS CHEST CHIEF CHILD
+CHILL CHOIR CHOSE CIVIC CIVIL CLAIM CLASS CLEAN CLEAR CLERK CLICK CLIFF
+CLIMB CLOCK CLOSE CLOTH CLOUD COACH COAST COLOR COMET COMIC CORAL COUCH
+COUGH COULD COUNT COURT COVER CRACK CRAFT CRANE CRASH CREAM CRIME CROSS
+CROWD CROWN CRUEL CRUSH CURVE CYCLE DAILY DAIRY DANCE DEALT DEATH DEBUT
+DELAY DEPTH DEVIL DIARY DIRTY DOUBT DOZEN DRAFT DRAIN DRAMA DRANK DREAM
+DRESS DRIED DRINK DRIVE DROVE DYING EAGER EAGLE EARLY EARTH EIGHT ELBOW
+ELDER EMPTY ENEMY ENJOY ENTER ENTRY EQUAL ERROR ESSAY EVENT EVERY EXACT
+EXIST EXTRA FAINT FAIRY FAITH FALSE FANCY FATAL FAULT FAVOR FEAST FENCE
+FEVER FIBER FIELD FIFTH FIFTY FIGHT FINAL FIRST FLAME FLASH FLEET FLESH
+FLOAT FLOCK FLOOD FLOOR FLOUR FLUID FOCUS FORCE FORGE FORTH FORTY FORUM
+FOUND FRAME FRAUD FRESH FRONT FROST FRUIT FUNNY GHOST GIANT GIVEN GLASS
+GLOBE GLORY GLOVE GRACE GRADE GRAIN GRAND GRANT GRAPE GRASP GRASS GRAVE
+GREAT GREEN GREET GRIEF GROUP GROWN GUARD GUESS GUEST GUIDE GUILT HABIT
+HAPPY HARSH HEART HEAVY HELLO HENCE HOBBY HONEY HONOR HORSE HOTEL HOUSE
+HUMAN HUMOR HURRY IDEAL IMAGE IMPLY INDEX INNER INPUT IRONY ISSUE IVORY
+JOINT JUDGE JUICE KNIFE KNOCK KNOWN LABEL LABOR LARGE LASER LATER LAUGH
+LAYER LEARN LEASE LEAST LEAVE LEGAL LEMON LEVEL LIGHT LIMIT LINEN LIVER
+LOCAL LOGIC LOOSE LOVER LOWER LOYAL LUCKY LUNCH LYING MAGIC MAJOR MAKER
+MAPLE MARCH MATCH MAYBE MAYOR MEANT MEDAL MEDIA MELON MERCY MERGE MERIT
+METAL METER MIGHT MINOR MINUS MIXED MODEL MONEY MONTH MORAL MOTOR MOUNT
+MOUSE MOUTH MOVIE MUSIC NERVE NEVER NEWLY NIGHT NOBLE NOISE NORTH NOTED
+NOVEL NURSE OCCUR OCEAN OFFER OFTEN OLIVE ONION ORDER OTHER OUGHT OUTER
+OWNER PAINT PANEL PANIC PAPER PARTY PATCH PAUSE PEACE PEACH PEARL PENNY
+PHASE PHONE PHOTO PIANO PIECE PILOT PITCH PIZZA PLACE PLAIN PLANE PLANT
+PLATE PLAZA POINT POLAR POUND POWER PRESS PRICE PRIDE PRIME PRINT PRIZE
+PROOF PROUD PROVE PULSE PUPIL PURSE QUEEN QUEST QUEUE QUICK QUIET QUITE
+QUOTE RADAR RADIO RAISE RALLY RANGE RAPID RATIO REACH REACT READY REALM
+REBEL REFER RELAX REPLY RIGHT RIGID RISKY RIVAL RIVER ROAST ROBIN ROBOT
+ROCKY ROUGH ROUND ROUTE ROYAL RUGBY RURAL SADLY SAINT SALAD SAUCE SCALE
+SCARE SCENE SCOPE SCORE SCOUT SENSE SERVE SEVEN SHADE SHAKE SHALL SHAME
+SHAPE SHARE SHARP SHEEP SHEET SHELF SHELL SHIFT SHINE SHIRT SHOCK SHOOT
+SHORE SHORT SHOUT SHOWN SIGHT SILLY SINCE SIXTH SIXTY SKILL SKIRT SLEEP
+SLICE SLIDE SLOPE SMALL SMART SMELL SMILE SMOKE SNAKE SOLAR SOLID SOLVE
+SORRY SOUND SOUTH SPACE SPARE SPEAK SPEED SPELL SPEND SPICE SPITE SPLIT
+SPOKE SPORT SPRAY STAFF STAGE STAIR STAKE STAMP STAND START STATE STEAM
+STEEL STEEP STICK STIFF STILL STOCK STONE STOOD STORE STORM STORY STOVE
+STRIP STUCK STUDY STUFF STYLE SUGAR SUITE SUNNY SUPER SWEAR SWEET SWIFT
+SWING SWORD TABLE TAKEN TASTE TEACH TEETH TENTH THANK THEFT THEIR THEME
+THERE THESE THICK THIEF THING THINK THIRD THOSE THREE THREW THROW THUMB
+TIGER TIGHT TIRED TITLE TODAY TOKEN TOOTH TOPIC TOTAL TOUCH TOUGH TOWEL
+TOWER TRACK TRADE TRAIL TRAIN TREAT TREND TRIAL TRIBE TRICK TRIED TRUCK
+TRULY TRUNK TRUST TRUTH TWICE UNCLE UNDER UNION UNITE UNITY UNTIL UPPER
+UPSET URBAN USAGE USUAL VALID VALUE VIDEO VIRUS VISIT VITAL VOCAL VOICE
+VOTER WAGON WAIST WASTE WATCH WATER WHEAT WHEEL WHERE WHICH WHILE WHITE
+WHOLE WHOSE WIDOW WIDTH WOMAN WORLD WORRY WORSE WORST WORTH WOULD WOUND
+WRIST WRITE WRONG WROTE YIELD YOUNG YOUTH
+ACCEPT ACCESS ACROSS ACTING ACTION ACTIVE ACTUAL ADVICE ADVISE AFFECT
+AFFORD AFRAID AGENCY AGENDA ALMOST ALWAYS AMOUNT ANIMAL ANNUAL ANSWER
+ANYONE ANYWAY APPEAL APPEAR ARRIVE ARTIST ASPECT ASSIGN ASSIST ASSUME
+ATTACK ATTEND AUTHOR AUTUMN AVENUE BANNER BARELY BARREL BASKET BATTLE
+BEAUTY BECAME BECOME BEFORE BEHALF BEHAVE BEHIND BELIEF BELONG BESIDE
+BETTER BEYOND BISHOP BORDER BOTTLE BOTTOM BOUGHT BRANCH BREATH BRIDGE
+BRIGHT BROKEN BUDGET BURDEN BUREAU BUTTON CAMERA CANCER CANNOT CARBON
+CAREER CASTLE CASUAL CAUGHT CENTER CHANCE CHANGE CHARGE CHOICE CHOOSE
+CHOSEN CHURCH CIRCLE CLIENT CLOSED CLOSER COFFEE COLUMN COMBAT COMEDY
+COMING COMMIT COMMON COPPER CORNER COTTON COUNTY COUPLE COURSE COUSIN
+CREATE CREDIT CRISIS CUSTOM DAMAGE DANGER DEALER DEBATE DECADE DECIDE
+DEFEAT DEFEND DEFINE DEGREE DELETE DEMAND DENTAL DEPEND DEPUTY DESERT
+DESIGN DESIRE DETAIL DETECT DEVICE DIFFER DINNER DIRECT DOCTOR DOLLAR
+DOMAIN DOUBLE DRAGON DRAWER DRIVEN DRIVER DURING EASILY EATING EDITOR
+EFFECT EFFORT EIGHTY EITHER ELEVEN EMERGE EMPIRE ENABLE ENERGY ENGAGE
+ENGINE ENOUGH ENSURE ENTIRE EQUITY ESCAPE ESTATE ETHNIC EXCEED EXCEPT
+EXCESS EXPAND EXPECT EXPERT EXPORT EXTEND EXTENT FABRIC FACTOR FAIRLY
+FALLEN FAMILY FAMOUS FARMER FATHER FELLOW FEMALE FIGURE FILTER FINGER
+FINISH FISCAL FLIGHT FLYING FOLLOW FORCED FOREST FORGET FORMAL FORMER
+FOUGHT FOURTH FRIEND FROZEN FUTURE GALAXY GARAGE GARDEN GATHER GENDER
+GENTLE GLOBAL GOLDEN GROUND GROWTH GUILTY GUITAR HAMMER HANDLE HAPPEN
+HARBOR HARDLY HEALTH HEIGHT HIDDEN HOLLOW HONEST HORROR HUNGRY HUNTER
+IGNORE IMPACT IMPORT INCOME INDEED INDOOR INFANT INFORM INJURY INSECT
+INSIDE INTENT INVEST INVITE ISLAND ITSELF JACKET JUNGLE JUNIOR KETTLE
+KIDNEY KNIGHT LADDER LATTER LAUNCH LAWYER LEADER LEAGUE LEGACY LEGEND
+LENGTH LESSON LETTER LIKELY LINEAR LIQUID LISTEN LITTLE LIVING LOCKED
+LONELY LOVELY LUXURY MAINLY MAKING MAMMAL MANAGE MANNER MARBLE MARGIN
+MARINE MARKET MASTER MATTER MATURE MEADOW MEDIUM MEMBER MEMORY MENTAL
+MERELY METHOD MIDDLE MIGHTY MINUTE MIRROR MOBILE MODERN MODEST MODULE
+MOMENT MONKEY MOSTLY MOTHER MOTION MUSCLE MUSEUM MUTUAL MYSELF NARROW
+NATION NATIVE NATURE NEARBY NEARLY NEEDLE NEPHEW NICKEL NINETY NOBODY
+NORMAL NOTICE NOTION NUMBER OBJECT OBTAIN OFFICE ONLINE OPTION ORANGE
+ORIGIN OUTPUT OXYGEN PACKET PALACE PARENT PARTLY PATENT PEPPER PERIOD
+PERMIT PERSON PICKLE PICNIC PILLOW PLANET PLENTY POCKET POETRY POLICE
+POLICY POLLEN POSTER POTATO POWDER PRAISE PRAYER PREFER PRETTY PRINCE
+PRISON PROFIT PROMPT PROPER PROVEN PUBLIC PUPPET PURPLE PURSUE PUZZLE
+RABBIT RACING RANDOM RARELY RATHER READER REALLY REASON RECALL RECENT
+RECIPE RECORD REDUCE REFORM REFUSE REGARD REGION REGRET RELATE RELIEF
+REMAIN REMIND REMOTE REMOVE REPAIR REPEAT REPORT RESCUE RESIST RESORT
+RESULT RETAIL RETAIN RETIRE RETURN REVEAL REVIEW REWARD RHYTHM RIBBON
+RISING ROCKET RUBBER RULING RUNNER SAFETY SAILOR SALARY SAMPLE SAVING
+SAYING SCHEME SCHOOL SCREEN SCRIPT SEARCH SEASON SECOND SECRET SECTOR
+SECURE SEEING SELECT SELLER SENIOR SETTLE SEVERE SHADOW SHOULD SHOWER
+SHRIMP SIGNAL SILENT SILVER SIMPLE SIMPLY SINGER SINGLE SISTER SKETCH
+SLIGHT SMOOTH SOCCER SOCIAL SOCKET SODIUM SOURCE SPEECH SPHERE SPIDER
+SPIRIT SPREAD SPRING SQUARE STABLE STATUE STATUS STEADY STOLEN STRAIN
+STRAND STREAM STREET STRESS STRICT STRIKE STRING STRONG STRUCK SUBMIT
+SUBTLE SUBURB SUDDEN SUFFER SUMMER SUMMIT SUPPLY SURELY SURVEY SWITCH
+SYMBOL SYSTEM TACKLE TAKING TALENT TARGET TEMPLE TENANT TENDER TENNIS
+THEORY THIRTY THOUGH THREAD THREAT THROAT THROWN TICKET TIMBER TISSUE
+TOWARD TRAVEL TREATY TRYING TUNNEL TWELVE TWENTY UNABLE UNIQUE UNITED
+UNLESS UNLIKE UPDATE UPWARD URGENT USEFUL VALLEY VENDOR VERSUS VESSEL
+VICTIM VIOLET VIRTUE VISION VISUAL VOLUME WALKER WEALTH WEAPON WEEKLY
+WEIGHT WHOLLY WINDOW WINNER WINTER WISDOM WITHIN WONDER WOODEN WORKER
+WRITER YELLOW
+"""
 
 
 if __name__ == "__main__":
