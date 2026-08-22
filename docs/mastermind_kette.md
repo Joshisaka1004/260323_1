@@ -18,6 +18,9 @@ python3 scripts/mastermind_kette.py --auto --teile 2 --luegner --seed 42
 
 # 4 Teile als PDF und PNG, Aufgabe und Lösung jeweils getrennt
 python3 scripts/mastermind_kette.py --auto --formate pdf,png --basis buch_seite_12
+
+# Gabel-Kette: zwei Stränge, Teil 5 braucht die Lösungen beider
+python3 scripts/mastermind_kette.py --auto --teile 5 --gabel
 ```
 
 Die interaktive Abfrage fragt alles Wesentliche ab (Enter übernimmt den
@@ -34,8 +37,9 @@ Enumeration** aller möglichen Codes (bis 2 Mio. Codes, d. h. z. B. 8 Farben ×
 1. **Eindeutigkeit** — jeder Teil hat genau eine Lösung.
 2. **Minimalität** — jede normale Hinweiszeile ist nötig; lässt man irgendeine
    weg, wird der Teil mehrdeutig.
-3. **Kettenzwang** — jeder Folgeteil ist ohne die Kettenzeile mehrdeutig,
-   Teil 2 ist also ohne die Lösung von Teil 1 nachweislich nicht knackbar.
+3. **Kettenzwang** — jeder Folgeteil ist ohne jede einzelne seiner
+   Kettenzeilen mehrdeutig; Teil 2 ist also ohne die Lösung von Teil 1
+   nachweislich nicht knackbar, und ein Gabelpunkt nicht ohne beide Stränge.
 4. **Schwache Hinweise** — pro Zeile höchstens `--max-schwarz` schwarze Stifte
    (Standard 1) und `--max-treffer` Stifte gesamt (Standard 2). Es gibt also
    nie eine Zeile mit 3 oder 4 Schwarzen, die das Rätsel fast verraten würde.
@@ -50,6 +54,7 @@ Nur-Schwarz-Modus), erhöht der Generator sie selbstständig und meldet das.
 | Schlampige Wertung | `--modus schlampig` | Bei rund einem Drittel der Zeilen ist nur die **Gesamtzahl** der Treffer bekannt (Feld „n Treffer“), nicht die Aufteilung schwarz/weiß. |
 | Nur Schwarz | `--modus schwarz` | Es werden nur schwarze Stifte gewertet; braucht deutlich mehr Zeilen (der Generator stockt automatisch auf). |
 | Rückwärts-Kette | `--kette rueckwaerts` | Der Lösungscode wird rückwärts in den nächsten Teil übertragen. |
+| Gabel-Kette | `--gabel` | Ab 3 Teilen: zwei unabhängige Stränge (z. B. bei 5 Teilen 1→2 und 3→4), die im letzten Teil münden. Der Gabelpunkt hat **zwei** Kettenzeilen (K1, K2) und ist beweisbar ohne jede einzelne davon mehrdeutig — er braucht also wirklich beide Stranglösungen. Weil zwei Kettenzeilen viel Information tragen, kommt der Gabelpunkt oft mit weniger normalen Zeilen aus (der Generator meldet das). Kombinierbar mit rückwärts und Lügner. |
 | Lügner | `--luegner` | Genau eine Hinweiszeile pro Teil lügt; die Kettenzeile sagt immer die Wahrheit. Der Löser muss die Lügenzeile selbst entlarven. Achtung: Generierung dauert hier spürbar länger (Größenordnung 30 s pro Teil). |
 | Ohne Wiederholung | `--ohne-wiederholung` | Jede Farbe kommt im Code höchstens einmal vor. |
 
@@ -90,8 +95,6 @@ Aufgaben- und Lösungsblatt später eindeutig zuordnen lassen.
 
 Noch nicht eingebaut, aber mit derselben Engine gut machbar:
 
-* **Gabel-Kette** — Teil 3 braucht die Lösungen von Teil 1 *und* Teil 2
-  (zwei Kettenzeilen); aus der Kette wird ein Baum.
 * **Geheime Transformation** — die Kettenzeile ist der Vorgängercode nach
   einer Regel, die der Löser erst aus den Wertungen erschließen muss
   (z. B. „jede Farbe eine Stufe weitergedreht“ oder zyklisch verschoben).

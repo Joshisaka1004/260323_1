@@ -28,6 +28,9 @@ Varianten (wählbar):
                          es nicht. Braucht deutlich mehr Zeilen.
   * Kette "rueckwaerts" — der Lösungscode wird RÜCKWÄRTS in den nächsten
                          Teil eingetragen.
+  * Gabel-Kette        — zwei unabhängige Stränge; der letzte Teil ist der
+                         Gabelpunkt mit ZWEI Kettenzeilen und braucht die
+                         Lösungen beider Stränge (ab 3 Teilen).
   * Lügner-Variante    — genau eine Hinweiszeile pro Teil lügt; der Löser
                          muss sie selbst entlarven.
   * Mit/ohne Farbwiederholung im Code.
@@ -100,9 +103,10 @@ class Zeile:
 
 @dataclass
 class Kettenzeile:
-    tipp: tuple          # der (transformierte) Lösungscode des Vorgängers
+    tipp: tuple          # der (transformierte) Lösungscode des Quell-Teils
     schwarz: int
     weiss: int
+    quelle: int          # Nummer des Teils, dessen Lösung hier eingetragen wird
 
 
 @dataclass
@@ -110,7 +114,7 @@ class Teil:
     nummer: int
     code: tuple
     zeilen: list
-    kette: Optional[Kettenzeile]
+    ketten: list         # 0 (Startteil), 1 (Kette) oder 2 (Gabelpunkt) Einträge
     schwierigkeit: str = "?"
 
 
@@ -125,6 +129,7 @@ class Konfig:
     wiederholung: bool = True
     modus: str = "standard"          # standard | schlampig | schwarz
     kette: str = "direkt"            # direkt | rueckwaerts
+    gabel: bool = False              # zwei Stränge, die im letzten Teil münden
     luegner: bool = False
     seed: Optional[int] = None
     signatur: str = ""
@@ -198,6 +203,23 @@ def kettentipp(code: tuple, cfg: Konfig) -> tuple:
     return code
 
 
+def topologie(cfg: Konfig):
+    """Vorgänger-Teile je Teilnummer (1-basiert). Linear: 1 -> 2 -> ... -> N.
+    Gabel: zwei unabhängige Stränge, die beide im letzten Teil münden,
+    z. B. bei 5 Teilen  1 -> 2  und  3 -> 4,  Teil 5 braucht 2 und 4."""
+    n = cfg.teile
+    if not cfg.gabel or n < 3:
+        return {i: ([i - 1] if i > 1 else []) for i in range(1, n + 1)}
+    a = (n - 1 + 1) // 2  # Länge des ersten Strangs: Teile 1..a
+    plan = {}
+    for i in range(1, a + 1):
+        plan[i] = [i - 1] if i > 1 else []
+    for i in range(a + 1, n):
+        plan[i] = [i - 1] if i > a + 1 else []
+    plan[n] = [a, n - 1]
+    return plan
+
+
 def zeilen_arten(anzahl: int, cfg: Konfig, rng: random.Random):
     """Wertungsart je (Bau-)Zeile. Die zuletzt gebaute Zeile bekommt immer
     volle Information, damit die Reduktion auf genau eine Lösung gelingt;
@@ -269,6 +291,24 @@ def baue_zeilen(code, basis, pool, arten, cfg, rng):
     return zeilen
 
 
+def entferne_redundante(zeilen, basis, farben):
+    """Streicht so lange Zeilen, deren Weglassen die Lösung eindeutig lässt,
+    bis jede verbleibende Zeile nötig ist. Wird am Gabelpunkt gebraucht:
+    Dort schrumpfen zwei Kettenzeilen den Suchraum so stark, dass die volle
+    Zeilenzahl kaum je komplett nötig ist."""
+    zeilen = list(zeilen)
+    geaendert = True
+    while geaendert and len(zeilen) > 1:
+        geaendert = False
+        for i in range(len(zeilen)):
+            rest = zeilen[:i] + zeilen[i + 1:]
+            if len(loesungsmenge(rest, basis, farben)) == 1:
+                del zeilen[i]
+                geaendert = True
+                break
+    return zeilen
+
+
 def jede_zeile_noetig(zeilen, basis, farben) -> bool:
     for i in range(len(zeilen)):
         rest = zeilen[:i] + zeilen[i + 1:]
@@ -324,29 +364,53 @@ def finde_luege(code, zeilen, basis, cfg, rng):
     return None
 
 
+def kettenzwang_ok(zeilen, ketten, alle, cfg) -> bool:
+    """Wahr, wenn der Teil ohne jede einzelne Kettenzeile (bei sonst
+    vollständiger Information) mehrdeutig bleibt."""
+    f = cfg.farben
+    for weg in range(len(ketten)):
+        basis = alle
+        for i, k in enumerate(ketten):
+            if i != weg:
+                basis = filtere(basis, k.tipp, "sw", (k.schwarz, k.weiss), f)
+        if cfg.luegner:
+            ohne = luegner_kandidaten(zeilen, basis, f)
+        else:
+            ohne = loesungsmenge(zeilen, basis, f)
+        if len(ohne) < 2:
+            return False
+    return True
+
+
 def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
+    """Erzeugt einen Teil. `vorgaenger` ist eine Liste von Paaren
+    (quell_nummer, quell_code) — leer für Startteile, ein Eintrag in der
+    normalen Kette, zwei am Gabelpunkt."""
     f = cfg.farben
     for _ in range(cfg.versuche):
         code = rng.choice(alle)
-        kette = None
+        ketten = []
         basis = alle
-        if vorgaenger is not None:
-            kt = kettentipp(vorgaenger, cfg)
-            if kt == code:
-                continue
+        for quelle, qcode in vorgaenger:
+            kt = kettentipp(qcode, cfg)
+            if kt == code or any(kt == k.tipp for k in ketten):
+                ketten = None
+                break
             ks, kw = bewertung(kt, code, f)
             if not schwach(ks, kw, cfg):
-                continue
-            basis = filtere(alle, kt, "sw", (ks, kw), f)
-            # Die Kettenzeile darf den Suchraum nicht schon fast leeren.
-            if len(basis) < 12 * zeilen_n:
-                continue
-            kette = Kettenzeile(kt, ks, kw)
+                ketten = None
+                break
+            basis = filtere(basis, kt, "sw", (ks, kw), f)
+            ketten.append(Kettenzeile(kt, ks, kw, quelle))
+        # Die Kettenzeilen dürfen den Suchraum nicht schon fast leeren.
+        if ketten is None or len(basis) < 12 * zeilen_n:
+            continue
 
         # Pool aller "schwachen" Tipps relativ zum Geheimcode.
+        ketten_tipps = {k.tipp for k in ketten}
         pool = [g for g in alle
                 if g != code
-                and (kette is None or g != kette.tipp)
+                and g not in ketten_tipps
                 and schwach(*bewertung(g, code, f), cfg)]
         if len(pool) < zeilen_n * 3:
             continue
@@ -385,19 +449,20 @@ def generiere_teil(nummer, zeilen_n, vorgaenger, alle, cfg, rng):
             if zeilen is None:
                 continue
             if not jede_zeile_noetig(zeilen, basis, f):
-                continue
+                if len(vorgaenger) < 2:
+                    continue
+                # Gabelpunkt: überzählige Zeilen streichen statt verwerfen.
+                zeilen = entferne_redundante(zeilen, basis, f)
+                if len(zeilen) < 3:
+                    continue
 
-        # Kettenzwang: ohne Kettenzeile muss der Teil mehrdeutig sein.
-        if kette is not None:
-            if cfg.luegner:
-                ohne = luegner_kandidaten(zeilen, alle, f)
-            else:
-                ohne = loesungsmenge(zeilen, alle, f)
-            if len(ohne) < 2:
-                continue
+        # Kettenzwang: ohne JEDE einzelne Kettenzeile muss der Teil
+        # mehrdeutig sein — am Gabelpunkt sind also beide Zuträger nötig.
+        if not kettenzwang_ok(zeilen, ketten, alle, cfg):
+            continue
 
         rng.shuffle(zeilen)
-        teil = Teil(nummer, code, zeilen, kette)
+        teil = Teil(nummer, code, zeilen, ketten)
         teil.schwierigkeit = schaetze_schwierigkeit(teil, basis, cfg)
         return teil
     return None
@@ -437,17 +502,23 @@ def generiere_puzzle(cfg: Konfig, rng: random.Random):
             print(f"  {cfg.zeilen + extra - 1} Zeilen reichen bei diesen "
                   f"Einstellungen nicht für Eindeutigkeit — versuche es mit "
                   f"{zeilen_n} Zeilen pro Teil ...", file=sys.stderr)
+        plan = topologie(cfg)
         teile = []
-        vorher = None
+        codes = {}
         for n in range(1, cfg.teile + 1):
-            teil = generiere_teil(n, zeilen_n, vorher, alle, cfg, rng)
+            vorgaenger = [(q, codes[q]) for q in plan[n]]
+            teil = generiere_teil(n, zeilen_n, vorgaenger, alle, cfg, rng)
             if teil is None:
                 teile = None
                 break
             teile.append(teil)
-            vorher = teil.code
+            codes[n] = teil.code
+            zusatz = ""
+            if len(teil.zeilen) != zeilen_n:
+                zusatz = (f", Gabelpunkt kommt mit {len(teil.zeilen)} "
+                          f"normalen Zeilen aus")
             print(f"  Teil {n} erzeugt "
-                  f"(Schwierigkeit: {teil.schwierigkeit}) ...",
+                  f"(Schwierigkeit: {teil.schwierigkeit}{zusatz}) ...",
                   file=sys.stderr)
         if teile is not None:
             cfg.zeilen = zeilen_n  # damit Kopf- und Regeltexte stimmen
@@ -465,17 +536,20 @@ def generiere_puzzle(cfg: Konfig, rng: random.Random):
 def pruefe_puzzle(teile, cfg: Konfig):
     alle = alle_codes(cfg)
     f = cfg.farben
-    vorher = None
+    plan = topologie(cfg)
+    codes = {t.nummer: t.code for t in teile}
     for teil in teile:
         basis = alle
-        if teil.kette is not None:
-            assert teil.kette.tipp == kettentipp(vorher, cfg), \
-                f"Teil {teil.nummer}: Kettenzeile passt nicht zum Vorgänger."
-            assert bewertung(teil.kette.tipp, teil.code, f) == \
-                (teil.kette.schwarz, teil.kette.weiss), \
+        assert [k.quelle for k in teil.ketten] == plan[teil.nummer], \
+            f"Teil {teil.nummer}: Kettenzeilen passen nicht zur Topologie."
+        for k in teil.ketten:
+            assert k.tipp == kettentipp(codes[k.quelle], cfg), \
+                f"Teil {teil.nummer}: Kettenzeile passt nicht zu Teil {k.quelle}."
+            assert bewertung(k.tipp, teil.code, f) == (k.schwarz, k.weiss), \
                 f"Teil {teil.nummer}: Kettenwertung falsch."
-            basis = filtere(alle, teil.kette.tipp, "sw",
-                            (teil.kette.schwarz, teil.kette.weiss), f)
+            assert schwach(k.schwarz, k.weiss, cfg), \
+                f"Teil {teil.nummer}: Kettenwertung verletzt die Grenzen."
+            basis = filtere(basis, k.tipp, "sw", (k.schwarz, k.weiss), f)
         for z in teil.zeilen:
             s, w = bewertung(z.tipp, teil.code, f)
             assert (s, w) == (z.wahr_schwarz, z.wahr_weiss), \
@@ -495,14 +569,8 @@ def pruefe_puzzle(teile, cfg: Konfig):
                 f"Teil {teil.nummer}: Lösung nicht eindeutig!"
             assert jede_zeile_noetig(teil.zeilen, basis, f), \
                 f"Teil {teil.nummer}: Eine Zeile ist überflüssig."
-        if teil.kette is not None:
-            if cfg.luegner:
-                ohne = luegner_kandidaten(teil.zeilen, alle, f)
-            else:
-                ohne = loesungsmenge(teil.zeilen, alle, f)
-            assert len(ohne) >= 2, \
-                f"Teil {teil.nummer}: auch ohne Kettenzeile lösbar!"
-        vorher = teil.code
+        assert kettenzwang_ok(teil.zeilen, teil.ketten, alle, cfg), \
+            f"Teil {teil.nummer}: auch ohne eine der Kettenzeilen lösbar!"
 
 
 # ---------------------------------------------------------------------------
@@ -534,12 +602,13 @@ def drucke_konsole(teile, cfg: Konfig, seed: int):
     b.append("")
     for teil in teile:
         b.append(f"TEIL {teil.nummer}   (Schwierigkeit: {teil.schwierigkeit})")
-        if teil.kette is not None:
+        for ki, k in enumerate(teil.ketten, 1):
+            label = f"K{ki}" if len(teil.ketten) > 1 else "K "
             richtung = ("rückwärts eingetragener "
                         if cfg.kette == "rueckwaerts" else "")
-            b.append(f"  K  {'? ' * cfg.laenge} <- {richtung}Code aus "
-                     f"Teil {teil.nummer - 1}   "
-                     f"{wertung_text('sw', (teil.kette.schwarz, teil.kette.weiss))}")
+            b.append(f"  {label} {'? ' * cfg.laenge}<- {richtung}Code aus "
+                     f"Teil {k.quelle}   "
+                     f"{wertung_text('sw', (k.schwarz, k.weiss))}")
         for i, z in enumerate(teil.zeilen, 1):
             b.append(f"  {i}  {code_text(z.tipp)}   {wertung_text(z.art, z.key)}")
         b.append("")
@@ -587,15 +656,22 @@ def regel_zeilen(cfg: Konfig):
     else:
         regeln.append("Trotzdem sind alle normalen Zeilen nötig.")
     if cfg.teile > 1:
-        if cfg.kette == "rueckwaerts":
-            regeln.append("Löse Teil 1. Übertrage danach jeden Lösungscode "
-                          "RÜCKWÄRTS in die markierte Kettenzeile des "
-                          "nächsten Teils.")
+        rueck = " RÜCKWÄRTS" if cfg.kette == "rueckwaerts" else ""
+        if cfg.gabel and cfg.teile >= 3:
+            regeln.append("Das Rätsel gabelt sich: Teile ohne K-Zeile sind "
+                          "eigenständige Startpunkte zweier Stränge. Übertrage "
+                          f"jeden Lösungscode{rueck} in die markierten "
+                          "K-Zeilen der Teile, die ihn verlangen.")
+            regeln.append(f"Der letzte Teil ist der Gabelpunkt: Er hat ZWEI "
+                          f"Kettenzeilen (K1 und K2) und braucht die Lösungen "
+                          f"beider Stränge.")
         else:
-            regeln.append("Löse Teil 1. Übertrage danach jeden Lösungscode in "
-                          "die markierte Kettenzeile des nächsten Teils.")
-        regeln.append("Die Schwarz/Weiß-Wertung der Kettenzeile ist bereits "
-                      "gegeben. Ohne sie ist der Teil nicht eindeutig lösbar.")
+            regeln.append(f"Löse Teil 1. Übertrage danach jeden Lösungscode"
+                          f"{rueck} in die markierte Kettenzeile des "
+                          f"nächsten Teils.")
+        regeln.append("Die Schwarz/Weiß-Wertung jeder Kettenzeile ist bereits "
+                      "gegeben. Ohne jede einzelne von ihnen ist der Teil "
+                      "nicht eindeutig lösbar.")
     return regeln
 
 
@@ -643,23 +719,25 @@ def schreibe_html(teile, cfg: Konfig, seed: int, pfad: str,
                 wahr = wertung_text(lz.art, projektion(
                     lz.art, lz.wahr_schwarz, lz.wahr_weiss))
                 zusatz.append(f"Lügenzeile: {li} (wahre Wertung: {wahr})")
-            if teil.kette is not None:
-                zusatz.append(f"Kettenzeile aus Teil {teil.nummer - 1}: "
-                              f"{code_text(teil.kette.tipp)}")
+            for ki, k in enumerate(teil.ketten, 1):
+                label = f"K{ki}" if len(teil.ketten) > 1 else "K"
+                zusatz.append(f"Zeile {label} aus Teil {k.quelle}: "
+                              f"{code_text(k.tipp)}")
             for txt in zusatz:
                 zeilen_html.append(
                     f'<div class="note">{html_mod.escape(txt)}</div>')
             kopf = f"Level: {teil.schwierigkeit}"
         else:
-            if teil.kette is not None:
+            for ki, k in enumerate(teil.ketten, 1):
+                label = f"K{ki}" if len(teil.ketten) > 1 else "K"
                 frage = "".join('<span class="peg ghost">?</span>'
                                 for _ in range(cfg.laenge))
                 richtung = " (rückwärts!)" if cfg.kette == "rueckwaerts" else ""
-                fb = html_wertung("sw", (teil.kette.schwarz, teil.kette.weiss))
+                fb = html_wertung("sw", (k.schwarz, k.weiss))
                 zeilen_html.append(
-                    f'<div class="row chain"><span class="idx">K</span>'
+                    f'<div class="row chain"><span class="idx">{label}</span>'
                     f'<span class="chainlabel">Code aus Teil '
-                    f'{teil.nummer - 1}{richtung}</span>{frage}'
+                    f'{k.quelle}{richtung}</span>{frage}'
                     f'<span class="fb">{fb}</span></div>')
             for i, z in enumerate(teil.zeilen, 1):
                 pegs = "".join(html_kreis(x) for x in z.tipp)
@@ -770,9 +848,10 @@ def schreibe_json(teile, cfg: Konfig, seed: int, pfad: str):
             "nummer": t.nummer,
             "loesung": code_str(t.code),
             "schwierigkeit": t.schwierigkeit,
-            "kette": None if t.kette is None else {
-                "tipp": code_str(t.kette.tipp),
-                "schwarz": t.kette.schwarz, "weiss": t.kette.weiss},
+            "ketten": [{
+                "quelle": k.quelle,
+                "tipp": code_str(k.tipp),
+                "schwarz": k.schwarz, "weiss": k.weiss} for k in t.ketten],
             "zeilen": [{
                 "tipp": code_str(z.tipp),
                 "art": z.art,
@@ -943,6 +1022,8 @@ def _untertitel(cfg: Konfig, teile, seed: int) -> str:
         unter += " · Lügner-Variante"
     if cfg.kette == "rueckwaerts" and cfg.teile > 1:
         unter += " · Rückwärts-Kette"
+    if cfg.gabel and cfg.teile >= 3:
+        unter += " · Gabel-Kette"
     schwierig = max((t.schwierigkeit for t in teile),
                     key=lambda s: ["leicht", "mittel", "schwer"].index(s))
     return f"{unter} · Level: {schwierig} · Seed {seed}"
@@ -975,13 +1056,13 @@ def _wertung_elemente(el, x_rechts, mitte, art, key, punkt_r=3.4):
 
 
 def _karte(el, x, y, breite, titel, kopf_rechts, zeilen, cfg, peg_d, zeilen_h,
-           hinweis=None):
+           hinweise=()):
     """Zeichnet eine Teil-Karte; `zeilen` sind Tupel
     (label, pegs|None, art, key, stil) mit stil in {'normal','kette','loesung'}.
     Gibt die Höhe der Karte zurück."""
     pad = 9.0
     kopf_h = 15.0
-    hinweis_h = 10.0 if hinweis else 0.0
+    hinweis_h = 10.0 * len(hinweise)
     hoehe = pad + kopf_h + hinweis_h + len(zeilen) * zeilen_h + pad
     el.append(el_rect(x, y, breite, hoehe, 8, fuell=C_WEISS,
                       rand=C_LINIE, breite=1))
@@ -994,9 +1075,9 @@ def _karte(el, x, y, breite, titel, kopf_rechts, zeilen, cfg, peg_d, zeilen_h,
     fb_b = max(34.0, cfg.laenge * (2 * 3.4 + 2.6) + 4)
     peg_x0 = x + pad + idx_b + 4
     peg_gap = 3.6
-    if hinweis:
-        el.append(el_text(x + pad, y + pad + kopf_h + 7, hinweis, 7.2,
-                          C_KETTELINIE, "start", True))
+    for hi, hinweis in enumerate(hinweise):
+        el.append(el_text(x + pad, y + pad + kopf_h + 7 + 10.0 * hi, hinweis,
+                          7.2, C_KETTELINIE, "start", True))
     yy = y + pad + kopf_h + hinweis_h
     for i, (label, pegs, art, key, stil) in enumerate(zeilen):
         mitte = yy + zeilen_h / 2
@@ -1076,11 +1157,12 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
             max_h = 0.0
         x = rand + spalte * (karten_b + luecke)
 
+        mehrere = len(teil.ketten) > 1
         if art == "aufgabe":
             zeilen = []
-            if teil.kette is not None:
-                zeilen.append(("K", None, "sw",
-                               (teil.kette.schwarz, teil.kette.weiss),
+            for ki, k in enumerate(teil.ketten, 1):
+                label = f"K{ki}" if mehrere else "K"
+                zeilen.append((label, None, "sw", (k.schwarz, k.weiss),
                                "kette"))
             for i, z in enumerate(teil.zeilen, 1):
                 zeilen.append((str(i), z.tipp, z.art, z.key, "normal"))
@@ -1089,13 +1171,15 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
             zeilen = [("L", teil.code, None, None, "loesung")]
             kopf = f"Level: {teil.schwierigkeit}"
 
-        hinweis = None
-        if art == "aufgabe" and teil.kette is not None:
+        hinweise = []
+        if art == "aufgabe":
             richtung = (" rückwärts" if cfg.kette == "rueckwaerts" else "")
-            hinweis = (f"Zeile K: Lösungscode aus Teil {teil.nummer - 1}"
-                       f"{richtung} eintragen")
+            for ki, k in enumerate(teil.ketten, 1):
+                label = f"K{ki}" if mehrere else "K"
+                hinweise.append(f"Zeile {label}: Lösungscode aus Teil "
+                                f"{k.quelle}{richtung} eintragen")
         h = _karte(el, x, zeilen_y, karten_b, f"TEIL {teil.nummer}", kopf,
-                   zeilen, cfg, peg_d, zeilen_h, hinweis)
+                   zeilen, cfg, peg_d, zeilen_h, hinweise)
 
         if art == "loesung":
             # Klartext und ggf. Lügenzeile unter die Lösung schreiben.
@@ -1106,9 +1190,10 @@ def baue_seite(teile, cfg: Konfig, seed: int, art: str) -> Seite:
                 wahr = wertung_text(lz.art, projektion(lz.art, lz.wahr_schwarz,
                                                        lz.wahr_weiss))
                 zusatz.append(f"Lügenzeile: {li} (wahr: {wahr})")
-            if teil.kette is not None:
-                zusatz.append(f"Kettenzeile aus Teil {teil.nummer - 1}: "
-                              f"{code_text(teil.kette.tipp)}")
+            for ki, k in enumerate(teil.ketten, 1):
+                label = f"K{ki}" if mehrere else "K"
+                zusatz.append(f"Zeile {label} aus Teil {k.quelle}: "
+                              f"{code_text(k.tipp)}")
             ty = zeilen_y + h + 3
             for txt in zusatz:
                 el_text_stifte(el, x + 9, ty + 7, txt, 7.6, C_GRAU)
@@ -1558,6 +1643,12 @@ def interaktiv(cfg: Konfig) -> Konfig:
         cfg.kette = ("rueckwaerts" if frage_janein(
             "Kette rückwärts übertragen (Zusatz-Dreh)?",
             cfg.kette == "rueckwaerts") else "direkt")
+    if cfg.teile >= 3:
+        cfg.gabel = frage_janein(
+            "Gabel-Kette (zwei Stränge, der letzte Teil braucht beide "
+            "Lösungen)?", cfg.gabel)
+    else:
+        cfg.gabel = False
     cfg.luegner = frage_janein(
         "Lügner-Variante (genau eine Zeile pro Teil lügt)?", cfg.luegner)
     seed = frage("Zufalls-Seed (leer = zufällig)", cfg.seed or "", str)
@@ -1588,6 +1679,9 @@ def parse_args(argv):
                    default="standard")
     p.add_argument("--kette", choices=("direkt", "rueckwaerts"),
                    default="direkt")
+    p.add_argument("--gabel", action="store_true",
+                   help="Gabel-Kette: zwei unabhängige Stränge, der letzte "
+                        "Teil braucht die Lösungen beider (ab 3 Teilen)")
     p.add_argument("--luegner", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--signatur", default="")
@@ -1637,8 +1731,8 @@ def main(argv=None):
                  zeilen=args.zeilen, max_schwarz=args.max_schwarz,
                  max_treffer=args.max_treffer,
                  wiederholung=not args.ohne_wiederholung,
-                 modus=args.modus, kette=args.kette, luegner=args.luegner,
-                 seed=args.seed, signatur=args.signatur)
+                 modus=args.modus, kette=args.kette, gabel=args.gabel,
+                 luegner=args.luegner, seed=args.seed, signatur=args.signatur)
     formate = {f.strip().lower() for f in args.formate.split(",") if f.strip()}
     if "alle" in formate:
         formate = {"html", "pdf", "png", "json"}
@@ -1653,6 +1747,9 @@ def main(argv=None):
     if not cfg.wiederholung and cfg.farben < cfg.laenge:
         sys.exit("Ohne Wiederholung braucht es mindestens so viele Farben "
                  "wie Stellen.")
+    if cfg.gabel and cfg.teile < 3:
+        sys.exit("Die Gabel-Kette braucht mindestens 3 Teile "
+                 "(zwei Stränge plus Gabelpunkt).")
     raum = (cfg.farben ** cfg.laenge if cfg.wiederholung
             else math.perm(cfg.farben, cfg.laenge))
     if raum > MAX_RAUM:
