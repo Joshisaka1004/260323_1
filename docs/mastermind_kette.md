@@ -5,8 +5,9 @@ Teil k wird als verdeckte **Kettenzeile** in Teil k+1 übernommen, deren
 Schwarz/Weiß-Wertung bereits angegeben ist. Ohne die Lösung des Vorgängers ist
 der Folgeteil **beweisbar mehrdeutig** — die Kette ist also zwingend.
 
-Skript: [`scripts/mastermind_kette.py`](../scripts/mastermind_kette.py)
-(reines Python 3, keine Abhängigkeiten).
+Skript: [`scripts/mastermind_kette.py`](../scripts/mastermind_kette.py) —
+reines Python 3 (ab 3.8). Konsole, HTML, PDF und JSON laufen ohne jede
+Zusatzbibliothek; nur der PNG-Export nutzt Pillow, wenn es vorhanden ist.
 
 ## Schnellstart
 
@@ -22,7 +23,7 @@ python3 scripts/mastermind_kette.py --auto --formate pdf,png --basis buch_seite_
 Die interaktive Abfrage fragt alles Wesentliche ab (Enter übernimmt den
 Vorschlag): Anzahl Teile (1–8), Codelänge, Farbenzahl, Wiederholung ja/nein,
 Zeilen pro Teil, Treffer-Obergrenzen, Wertungsmodus, Kettenrichtung,
-Lügner-Variante, Seed und Signatur.
+Lügner-Variante, Seed, Signatur und zum Schluss die Ausgabeformate.
 
 ## Garantien — geprüft, nicht geraten
 
