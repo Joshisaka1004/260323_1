@@ -680,6 +680,14 @@ def regel_zeilen(cfg: Konfig):
     regeln = []
     regeln.append("Schwarz ● = richtiges Symbol am richtigen Platz; "
                   "Weiß ○ = richtiges Symbol am falschen Platz.")
+    if cfg.modus == "schwarz":
+        regeln.append("Ein Strich (–) statt Stiften bedeutet: null Treffer — "
+                      "kein Symbol dieser Zeile steht an der richtigen "
+                      "Position.")
+    else:
+        regeln.append("Ein Strich (–) statt Stiften bedeutet: null Treffer — "
+                      "KEIN Symbol dieser Zeile kommt im Code vor. Das ist "
+                      "oft der stärkste Hinweis!")
     if cfg.modus == "schlampig":
         regeln.append("Bei Zeilen mit Treffer-Feld [n Treffer] war der "
                       "Wertende schlampig: Es ist nur die GESAMTZAHL der "
