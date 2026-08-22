@@ -1803,25 +1803,46 @@ def parse_args(argv):
                    help="Basisname der Ausgabedateien; Aufgabe und Lösung "
                         "werden getrennt geschrieben")
     p.add_argument("--ordner", default=None,
-                   help="Ausgabeordner (Standard: Unterordner "
-                        f"'{STANDARD_ORDNER}' neben der Skriptdatei); "
+                   help=f"Ausgabeordner (Standard: {standard_ordner()}); "
                         "wird bei Bedarf angelegt")
     p.add_argument("--dpi", type=int, default=150,
                    help="Auflösung der PNG-Ausgabe")
     return p.parse_args(argv)
 
 
-STANDARD_ORDNER = "raetsel"
+# Bevorzugter Ausgabeordner — hier bei Bedarf einfach anpassen.
+# Existiert der Rechner/Benutzer dieses Pfades nicht (anderer Computer),
+# weicht das Skript automatisch auf den Unterordner neben sich selbst aus.
+STANDARD_ORDNER = ("/Users/joachimvetter/Library/Mobile Documents/"
+                   "com~apple~CloudDocs/Claude_2/Puzzles/Mastermind_1/"
+                   "Current_Puzzles")
+AUSWEICH_ORDNER = "raetsel"
+
+
+def _heimatordner() -> str:
+    """Ordner, in dem die Skriptdatei liegt."""
+    try:
+        return os.path.dirname(os.path.abspath(__file__))
+    except NameError:            # z. B. interaktive Konsole
+        return os.getcwd()
+
+
+def _erreichbar(pfad: str) -> bool:
+    """Prüft, ob der Benutzerordner dieses Pfades existiert — also ob wir
+    auf dem Rechner sind, für den der Pfad gedacht ist. Die letzten Ebenen
+    dürfen fehlen, die legt das Skript selbst an."""
+    teile = os.path.abspath(os.path.expanduser(pfad)).split(os.sep)
+    anker = os.sep.join(teile[:3]) or os.sep
+    return os.path.isdir(anker)
 
 
 def standard_ordner() -> str:
-    """Unterordner neben der Skriptdatei — unabhängig davon, welches
-    Arbeitsverzeichnis die Entwicklungsumgebung gerade gesetzt hat."""
-    try:
-        heimat = os.path.dirname(os.path.abspath(__file__))
-    except NameError:            # z. B. interaktive Konsole
-        heimat = os.getcwd()
-    return os.path.join(heimat, STANDARD_ORDNER)
+    """Der eingestellte Ausgabeordner, sonst ein Unterordner neben der
+    Skriptdatei — unabhängig davon, welches Arbeitsverzeichnis die
+    Entwicklungsumgebung gerade gesetzt hat."""
+    if STANDARD_ORDNER and _erreichbar(STANDARD_ORDNER):
+        return os.path.expanduser(STANDARD_ORDNER)
+    return os.path.join(_heimatordner(), AUSWEICH_ORDNER)
 
 
 def bereite_ordner(ordner: str) -> str:

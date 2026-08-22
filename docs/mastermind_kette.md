@@ -113,12 +113,18 @@ Daraus entstehen z. B. `mein_raetsel_aufgabe.pdf` und
 `mein_raetsel_loesung.pdf`. Im interaktiven Modus fragt das Skript am Ende
 Formate, Basisname und Ordner ab.
 
-**Ausgabeordner:** Ohne Angabe landen die Dateien im Unterordner `raetsel`
-**neben der Skriptdatei** — also z. B. `scripts/raetsel/`. Bewusst nicht im
-aktuellen Arbeitsverzeichnis: In PyCharm und ähnlichen Umgebungen ist das oft
-ein anderer Ordner als der, in dem das Skript liegt, und die Dateien wären
-schwer wiederzufinden. Ein eigener Ordner (auch mehrstufig, `~` erlaubt) wird
-bei Bedarf automatisch angelegt; am Ende nennt das Skript den vollen Pfad.
+**Ausgabeordner:** Voreingestellt ist der Ordner in der Konstanten
+`STANDARD_ORDNER` am Anfang des Skripts (derzeit der iCloud-Ordner
+`…/Claude_2/Puzzles/Mastermind_1/Current_Puzzles`) — dort einfach anpassen,
+wenn die Rätsel woanders hin sollen. Läuft das Skript auf einem anderen
+Rechner, auf dem es diesen Benutzerordner nicht gibt, weicht es automatisch
+auf den Unterordner `raetsel` **neben der Skriptdatei** aus (also z. B.
+`scripts/raetsel/`). Bewusst nicht das aktuelle Arbeitsverzeichnis: In
+PyCharm und ähnlichen Umgebungen ist das oft ein anderer Ordner als der, in
+dem das Skript liegt, und die Dateien wären schwer wiederzufinden.
+
+Jeder Ordner (auch mehrstufig, `~` erlaubt) wird bei Bedarf automatisch
+angelegt; am Ende nennt das Skript den vollen Pfad.
 
 | Format | Inhalt |
 | --- | --- |
